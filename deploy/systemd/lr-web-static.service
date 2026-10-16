@@ -1,0 +1,20 @@
+[Unit]
+Description=LR 控制站前端静态服务（serve-static.cjs，:8000）
+# 托管 LR-Web/dist 并反代 /api → 127.0.0.1:8080（control-api 由 lr-platform 拉起）。
+After=network-online.target lr-platform.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=boreas
+Group=boreas
+WorkingDirectory=/home/boreas/project/LR/LR-Web
+# /bookarm-api 反代需要 BookArm Bearer token（bookarm 服务所有接口强制鉴权）
+EnvironmentFile=-/etc/lr-bookarm/bookarm.env
+ExecStart=/usr/bin/node scripts/serve-static.cjs --port 8000
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

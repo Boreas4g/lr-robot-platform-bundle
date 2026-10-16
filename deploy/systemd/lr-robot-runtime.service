@@ -1,0 +1,25 @@
+[Unit]
+Description=LR 机器人导航与 Edge Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=boreas
+WorkingDirectory=/home/boreas/LR/Library_robot
+EnvironmentFile=-/etc/lr-robot/runtime.env
+ExecStart=/home/boreas/LR/Library_robot/scripts/start-robot-runtime.sh
+Restart=on-failure
+RestartSec=10
+# 运动控制栈优先于同机的控制站/桌面进程调度，降低 CPU 抖动引起的
+# 指令循环与速度链卡顿（系统服务由 root 侧应用优先级，User= 不受影响）。
+Nice=-5
+# 同机跑控制站/浏览器时，cgroup CPU 权重保证运动控制栈优先获得 CPU。
+CPUWeight=1000
+# Terminate the launcher first so its cleanup trap can safely stop ROS child
+# processes.  systemd force-cleans any unresponsive child after this timeout.
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

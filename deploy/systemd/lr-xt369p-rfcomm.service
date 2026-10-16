@@ -1,0 +1,13 @@
+[Unit]
+Description=LR XT369P Bluetooth SPP reconnect service
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/lr-start-xt369p-rfcomm.sh 0 00:00:00:03:11:E0 1
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

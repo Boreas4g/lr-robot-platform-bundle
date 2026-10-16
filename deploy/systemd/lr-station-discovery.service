@@ -1,0 +1,21 @@
+[Unit]
+Description=LR 控制站局域网发现广播
+After=network-online.target lr-platform.service
+Wants=network-online.target
+Requires=lr-platform.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/libexec/lr-station-discovery.py --config /etc/lr-platform/discovery.json
+Restart=always
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/etc/lr-platform/discovery.json
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

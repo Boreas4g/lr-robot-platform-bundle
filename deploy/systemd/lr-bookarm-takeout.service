@@ -1,0 +1,29 @@
+[Unit]
+Description=BookArm take/return HTTP service (private Unix socket)
+After=network-online.target
+Wants=network-online.target
+Requires=lr-bookarm-can.service
+After=lr-bookarm-can.service
+# The retired Gateway BookArm runtime owns the same CAN, camera and serial
+# devices.  Do not use Conflicts= here: systemd would stop the existing
+# runtime as a side effect of starting this one.  A mechanical-arm handover
+# must always be an explicit, on-site action.
+
+[Service]
+Type=simple
+User=boreas
+WorkingDirectory=/home/boreas/project/LR/LR-Web/external/lingzu-bookarm-py/bookarm
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/lr-bookarm/bookarm.env
+RuntimeDirectory=lr-bookarm
+RuntimeDirectoryMode=0755
+ExecStartPre=/usr/bin/bash -c '! /usr/bin/systemctl is-active --quiet lr-bookarm-runtime.service'
+ExecStart=/home/boreas/project/LR/LR-Web/external/lingzu-bookarm-py/bookarm/scripts/start-takeout-service.sh
+Restart=on-failure
+RestartSec=3
+# A task runner waits for its bounded device operation to finish rather than
+# closing CAN/serial/camera handles in the middle of a physical action.
+TimeoutStopSec=infinity
+
+[Install]
+WantedBy=multi-user.target

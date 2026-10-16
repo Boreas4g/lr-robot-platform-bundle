@@ -1,0 +1,16 @@
+[Unit]
+Description=BookArm CAN interface (can0 @ 1Mbps)
+After=network-online.target
+Wants=network-online.target
+Before=lr-bookarm-takeout.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# A manual CAN recovery may already have brought the interface up before this
+# unit is installed.  Never flap a live bus merely to make systemd report the
+# dependency active; configure it only when it is actually offline.
+ExecStart=/usr/bin/bash -c '/usr/sbin/ip link show can0 2>/dev/null | /usr/bin/grep -q "state UP" || exec /home/boreas/project/LR/LR-Web/external/lingzu-bookarm-py/bookarm/scripts/arm/setup_can.sh can0 1000000'
+
+[Install]
+WantedBy=multi-user.target

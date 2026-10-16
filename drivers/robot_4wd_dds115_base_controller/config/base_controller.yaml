@@ -1,0 +1,11 @@
+base_controller:
+  wheel_ids:        [1, 2, 3, 4]
+  wheel_directions: ["forward", "backward", "forward", "backward"]
+  wheel_radius:     0.05     # meters
+  wheel_track:      0.33     # meters (left-right distance)
+  wheel_base:       0.33     # meters (front-rear distance)
+  device_path:      "/dev/rs485"
+  feedback_rate_hz: 10.0     # Hz
+  cmd_vel_timeout:  1.5      # seconds; 0 = disabled (JS sends at 10Hz while held)
+  inter_cmd_gap_ms: 4        # ms between motor commands (RS485 turnaround, needs > 2.2ms)
+  accel_rpm_per_sec: 400.0  # RPM/s ramp rate for acceleration and deceleration

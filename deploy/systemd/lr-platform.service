@@ -1,0 +1,17 @@
+[Unit]
+Description=LR 图书馆机器人管理平台
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/boreas/project/LR/LR-Web
+EnvironmentFile=-/etc/lr-platform/platform.env
+ExecStart=/home/boreas/project/LR/LR-Web/scripts/start-platform.sh
+ExecStop=/home/boreas/project/LR/LR-Web/scripts/stop-platform.sh
+RemainAfterExit=yes
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

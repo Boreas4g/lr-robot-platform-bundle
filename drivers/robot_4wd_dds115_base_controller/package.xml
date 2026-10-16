@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>robot_4wd_dds115_base_controller</name>
+  <version>2.0.0</version>
+  <description>ROS package for controlling a 4WD mobile robot equipped with DDSM115 brushless motors over RS485. C++ node with proper RS485 bus timing and threaded TX/feedback architecture.</description>
+  <maintainer email="alduxvm@gmail.com">Aldo Vargas</maintainer>
+  <license>BSD</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <build_depend>roscpp</build_depend>
+  <build_depend>rospy</build_depend>
+  <build_depend>std_msgs</build_depend>
+  <build_depend>nav_msgs</build_depend>
+  <build_depend>geometry_msgs</build_depend>
+  <build_depend>tf</build_depend>
+  <build_depend>serial</build_depend>
+
+  <exec_depend>roscpp</exec_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>tf</exec_depend>
+  <exec_depend>serial</exec_depend>
+</package>

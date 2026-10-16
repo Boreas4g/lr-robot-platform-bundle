@@ -1,0 +1,23 @@
+[Unit]
+Description=LR 固定命令宿主启动代理
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=boreas
+Environment=LR_WEB_ROOT=/home/boreas/project/LR/LR-Web
+Environment=LR_BOOKARM_ROOT=/home/boreas/project/LR/LR-Web/external/lingzu-bookarm-py/bookarm
+Environment=LR_BOOKARM_ALLOW_START=false
+ExecStart=/usr/bin/python3 /usr/local/libexec/lr-host-start-agent.py --socket /var/lib/lr-platform/host-start-agent/start-all.sock --script /usr/local/libexec/lr-platform-start-all.sh --restart-script /usr/local/libexec/lr-platform-restart-all.sh
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/var/lib/lr-platform/host-start-agent
+
+[Install]
+WantedBy=multi-user.target
