@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xt369-linux"
+version = "1.0.0"
+description = "Linux XT369 USB HID voltage and current API"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+xt369 = "xt369.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["xt369*"]
+
+[tool.setuptools.data-files]
+"share/doc/xt369-linux" = ["docs/API.md"]

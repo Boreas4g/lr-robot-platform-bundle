@@ -1,0 +1,2 @@
+# XT369 USB measurement interface only; no access to unrelated HID devices.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5750", ATTRS{product}=="ATORCH XT369P*", GROUP="boreas", MODE="0660"

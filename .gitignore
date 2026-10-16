@@ -1,3 +1,6 @@
 # 120M YOLO 权重超过 GitHub 单文件 100MB 限制，以 Release 资产形式随仓库发布；
 # 本地完整文件仍保留在本目录及 lr-robot-platform-bundle.tar.gz 中。
 /LR-Web/external/lingzu-bookarm-py/book_spine_inference_light/weights/best.pt
+
+# Local deployment backups may contain private runtime configuration and data.
+/.local-deploy/

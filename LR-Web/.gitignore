@@ -9,7 +9,7 @@
 **/*.egg-info
 *.pyc
 .tools/
-apps/control-api/data/
+apps/control-api/data
 .env
 .env.*
 !.env.example

@@ -190,3 +190,9 @@ ol {
     }
   }
 }
+
+// Allow overview actions to wrap on compact displays.
+@media (max-width: 575px) {
+  .ant-page-header-heading-extra { max-width: 100%; margin-inline-start: 0; }
+  .ant-page-header-heading-extra > .ant-space { flex-wrap: wrap; }
+}

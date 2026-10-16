@@ -25,6 +25,8 @@ DEFAULT_CRUISE_POINTS_FILE = _default_cruise_points_file()
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="LR_", extra="ignore")
 
+    battery_state_file: str = "data/battery/state.sqlite3"
+    battery_robot_id: str = "LR-01"
     app_name: str = "LR Control API"
     environment: str = "development"
     station_name: str = "LR 控制站"

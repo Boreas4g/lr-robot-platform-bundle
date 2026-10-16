@@ -1,0 +1,20 @@
+[Unit]
+Description=LR XT369 USB battery monitoring (measurement only)
+After=local-fs.target
+
+[Service]
+Type=simple
+User=boreas
+Group=boreas
+WorkingDirectory=/home/boreas/lr-robot-platform-bundle/LR-Web/apps/control-api
+ExecStart=/home/boreas/miniconda3/envs/lr-control-api/bin/python -m app.battery_collector --state /var/lib/lr-platform/battery/state.sqlite3 --serial 949016
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=8
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/lr-platform/battery
+
+[Install]
+WantedBy=multi-user.target

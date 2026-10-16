@@ -1,3 +1,4 @@
+import BatteryStatus from '@/components/BatteryStatus';
 import {
   AlertOutlined,
   BranchesOutlined,
@@ -359,10 +360,7 @@ export default function OverviewPage() {
             cancelText="返回"
             onConfirm={() => void toggleArmPolicy(false)}
           >
-            <Button
-              icon={<CheckCircleOutlined />}
-              loading={armPolicyLoading}
-            >
+            <Button icon={<CheckCircleOutlined />} loading={armPolicyLoading}>
               机械臂硬件：已确认
             </Button>
           </Popconfirm>
@@ -527,7 +525,10 @@ export default function OverviewPage() {
                         <RobotOutlined />
                       </span>
                       <div className={styles.primaryText}>
-                        <Typography.Text strong>{robot.name}</Typography.Text>
+                        <div className={styles.robotNameLine}>
+                          <Typography.Text strong>{robot.name}</Typography.Text>
+                          <BatteryStatus robotId={robot.id} />
+                        </div>
                         <Typography.Text type="secondary">
                           {robot.id} · {robot.mapVersion}
                         </Typography.Text>

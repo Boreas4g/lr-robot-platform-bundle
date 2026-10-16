@@ -9,6 +9,7 @@ import response so the operator can register manually later.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -18,7 +19,12 @@ from .schemas import MapVersion
 
 # Vehicle-side prerequisites; both must exist on this host to attempt staging.
 VEHICLE_MAP_STORE_DIR = Path("/var/lib/lr-robot/maps")
-REGISTER_SCRIPT = Path("/home/boreas/LR/Library_robot/scripts/register-robot-map.sh")
+REGISTER_SCRIPT = Path(
+    os.environ.get(
+        "LR_REGISTER_ROBOT_MAP_SCRIPT",
+        "/home/boreas/LR/Library_robot/scripts/register-robot-map.sh",
+    )
+)
 REGISTER_TIMEOUT_SECONDS = 120
 
 

@@ -155,6 +155,12 @@ export const useStyles = createStyles(({ token }) => ({
     borderRadius: 8,
     fontSize: 18,
   },
+  robotNameLine: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
   primaryText: {
     display: 'flex',
     minWidth: 0,

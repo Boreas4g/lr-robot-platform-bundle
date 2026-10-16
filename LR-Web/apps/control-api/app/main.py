@@ -1,9 +1,11 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.auth import router as auth_router
+from .api.battery import router as battery_router, battery_store
 from .api.chassis_params import router as chassis_params_router
 from .api.operations import router as operations_router
 from .api.robots import open_router as robots_open_router
@@ -39,6 +41,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth_router)
+app.include_router(battery_router, dependencies=[Depends(get_current_user)])
 app.include_router(chassis_params_router, dependencies=[Depends(get_current_user)])
 app.include_router(robots_router, dependencies=[Depends(get_current_user)])
 # 免鉴权直控：jog 单独挂载，不经过登录依赖。
@@ -87,3 +90,19 @@ async def robot_realtime(websocket: WebSocket) -> None:
         pass
     finally:
         robot_realtime_hub.unsubscribe(queue)
+
+
+@app.websocket("/api/v1/realtime/battery")
+async def battery_realtime(websocket: WebSocket) -> None:
+    protocol = websocket.headers.get("sec-websocket-protocol", "")
+    if settings.auth_enabled and not store.user_for_token(protocol.removeprefix("lr-auth.")):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+    await websocket.accept(subprotocol=protocol or None)
+    try:
+        while True:
+            snapshot = await asyncio.to_thread(battery_store().snapshot)
+            await websocket.send_json({"type": "battery.updated", "battery": snapshot})
+            await asyncio.sleep(1.0)
+    except (WebSocketDisconnect, RuntimeError):
+        pass
