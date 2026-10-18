@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import json
 import math
-import sys
 import tempfile
 import threading
 import time
-import types
 from pathlib import Path
 import unittest
 from unittest import mock
@@ -24,7 +22,6 @@ from bookarm.service.runner import FakeWorkflowRunner
 from bookarm.service.studio import (
     FakeStudioBackend,
     RealStudioBackend,
-    SegmentationUnavailableError,
     StudioStore,
 )
 
@@ -69,11 +66,19 @@ class StudioServiceTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         return response.json()
 
-    def segment_library_id(self) -> str:
+    def make_library_template(self, name: str = "测试书脊") -> str:
+        """Store one hand-drawn spine as a library template (no model needed)."""
+
         capture = self.capture()
-        segmented = self.client.post("%s/captures/%s/segment" % (STUDIO_URL, capture["id"]))
-        self.assertEqual(segmented.status_code, 200)
-        return segmented.json()["spines"][0]["library_id"]
+        response = self.client.post(
+            "%s/captures/%s/manual-segment" % (STUDIO_URL, capture["id"]),
+            json={
+                "name": name,
+                "polygon": [[60, 90], [160, 90], [160, 420], [60, 420]],
+            },
+        )
+        self.assertEqual(response.status_code, 201)
+        return response.json()["library_id"]
 
     def test_lift_move_updates_the_reported_height(self):
         initial = self.client.get("%s/lift/height" % STUDIO_URL)
@@ -120,52 +125,6 @@ class StudioServiceTests(unittest.TestCase):
         self.assertEqual(image.status_code, 200)
         self.assertEqual(image.headers["content-type"], "image/jpeg")
         self.assertTrue(image.content.startswith(b"\xff\xd8"))
-
-    def test_segment_populates_the_library_and_serves_png_crops(self):
-        capture = self.capture()
-
-        segmented = self.client.post("%s/captures/%s/segment" % (STUDIO_URL, capture["id"]))
-
-        self.assertEqual(segmented.status_code, 200)
-        payload = segmented.json()
-        self.assertEqual(payload["capture_id"], capture["id"])
-        self.assertGreater(payload["spine_count"], 0)
-        self.assertEqual(payload["spine_count"], len(payload["spines"]))
-        spine = payload["spines"][0]
-        self.assertTrue(spine["library_id"])
-        self.assertGreater(spine["confidence"], 0.0)
-        self.assertGreater(spine["area"], 0)
-        self.assertEqual(len(spine["bbox_xyxy"]), 4)
-        self.assertEqual(len(spine["polygon_xy"]), 4)
-
-        library = self.client.get("%s/library" % STUDIO_URL)
-        self.assertEqual(library.status_code, 200)
-        items = library.json()["items"]
-        self.assertEqual(len(items), payload["spine_count"])
-        self.assertEqual(items[0]["id"], payload["spines"][-1]["library_id"])
-        self.assertEqual(items[0]["capture_id"], capture["id"])
-        self.assertEqual(items[0]["spine_index"], payload["spines"][-1]["index"])
-
-        image = self.client.get("%s/library/%s/image" % (STUDIO_URL, spine["library_id"]))
-        self.assertEqual(image.status_code, 200)
-        self.assertEqual(image.headers["content-type"], "image/png")
-        self.assertTrue(image.content.startswith(b"\x89PNG"))
-
-    def test_segment_accepts_optional_threshold_overrides(self):
-        capture = self.capture()
-
-        segmented = self.client.post(
-            "%s/captures/%s/segment" % (STUDIO_URL, capture["id"]),
-            json={"conf": 0.5, "imgsz": 640},
-        )
-
-        self.assertEqual(segmented.status_code, 200)
-        self.assertGreater(segmented.json()["spine_count"], 0)
-
-    def test_segment_unknown_capture_returns_404(self):
-        response = self.client.post("%s/captures/nope/segment" % STUDIO_URL)
-
-        self.assertEqual(response.status_code, 404)
 
     def test_manual_segment_stores_a_named_library_template(self):
         capture = self.capture()
@@ -238,7 +197,7 @@ class StudioServiceTests(unittest.TestCase):
         self.assertEqual(self.client.get("%s/library" % STUDIO_URL).json()["items"], [])
 
     def test_delete_library_item_removes_it(self):
-        library_id = self.segment_library_id()
+        library_id = self.make_library_template()
 
         deleted = self.client.delete("%s/library/%s" % (STUDIO_URL, library_id))
 
@@ -253,7 +212,7 @@ class StudioServiceTests(unittest.TestCase):
         self.assertNotIn(library_id, [item["id"] for item in remaining])
 
     def test_library_survives_a_store_reload(self):
-        library_id = self.segment_library_id()
+        library_id = self.make_library_template()
 
         reloaded = FakeStudioBackend(
             StudioStore(self.studio_dir), busy_lock=self.runner.busy_lock
@@ -267,7 +226,7 @@ class StudioServiceTests(unittest.TestCase):
         )
 
     def test_takeout_accepts_a_library_template_id(self):
-        library_id = self.segment_library_id()
+        library_id = self.make_library_template()
 
         response = self.client.post(
             TAKEOUT_TASKS_URL,
@@ -281,7 +240,7 @@ class StudioServiceTests(unittest.TestCase):
         self.assertTrue(vision["details"]["spine_template"].endswith("%s.png" % library_id))
 
     def test_return_accepts_a_library_template_id(self):
-        library_id = self.segment_library_id()
+        library_id = self.make_library_template()
 
         response = self.client.post(
             RETURN_TASKS_URL,
@@ -292,7 +251,7 @@ class StudioServiceTests(unittest.TestCase):
         self.assertEqual(response.json()["kind"], "return_book")
 
     def test_takeout_rejects_both_or_neither_template_source(self):
-        library_id = self.segment_library_id()
+        library_id = self.make_library_template()
 
         both = self.client.post(
             TAKEOUT_TASKS_URL,
@@ -746,195 +705,12 @@ class StudioServiceTests(unittest.TestCase):
         self.assertTrue(report[0]["ok"])
 
 
-class RealStudioBackendGuidanceTests(unittest.TestCase):
-    """Missing YOLO assets surface actionable Chinese 503 guidance."""
-
-    def setUp(self):
-        self._dirs = tempfile.TemporaryDirectory()
-        self.addCleanup(self._dirs.cleanup)
-        root = Path(self._dirs.name)
-        self.root = root
-        self.store = StudioStore(root / "studio")
-        self.store.captures_dir.mkdir(parents=True, exist_ok=True)
-        (self.store.captures_dir / "cap1.jpg").write_bytes(b"\xff\xd8\xff\xd9")
-
-    def _backend(self, weights_path, infer_path) -> RealStudioBackend:
-        backend = RealStudioBackend(
-            camera=None,
-            lift=None,
-            store=self.store,
-            weights_path=weights_path,
-            infer_path=infer_path,
-        )
-        self.addCleanup(backend.shutdown)
-        return backend
-
-    def test_missing_weights_returns_chinese_503_guidance(self):
-        runner = FakeWorkflowRunner(stage_delay_s=0.01)
-        self.addCleanup(runner.shutdown)
-        backend = self._backend(
-            weights_path=self.root / "missing-best.pt",
-            infer_path=self.root / "missing-infer.py",
-        )
-        backend._infer_module = types.SimpleNamespace(
-            segment_image=lambda *args, **kwargs: (None, [])
-        )
-        client = TestClient(
-            create_app(runner, upload_dir=self.root / "uploads", studio=backend)
-        )
-
-        response = client.post("%s/captures/cap1/segment" % STUDIO_URL)
-
-        self.assertEqual(response.status_code, 503)
-        self.assertIn("书脊分割模型未安装", response.json()["detail"])
-        self.assertIn("book_spine_inference_light", response.json()["detail"])
-
-    def test_missing_infer_script_returns_chinese_503_guidance(self):
-        weights = self.root / "best.pt"
-        weights.write_bytes(b"fake weights")
-        backend = self._backend(
-            weights_path=weights,
-            infer_path=self.root / "missing-infer.py",
-        )
-
-        with self.assertRaisesRegex(SegmentationUnavailableError, "书脊分割模型未安装"):
-            backend.segment_capture("cap1", conf=0.5, imgsz=640)
-
-
-class RealStudioBackendResourceTests(unittest.TestCase):
-    """Torch thread capping and idle unload of the lazily loaded YOLO model.
-
-    Real torch/ultralytics are never imported here; both are stub modules
-    injected into ``sys.modules`` while the segmentation call runs.
-    """
-
-    def setUp(self):
-        self._dirs = tempfile.TemporaryDirectory()
-        self.addCleanup(self._dirs.cleanup)
-        root = Path(self._dirs.name)
-        self.store = StudioStore(root / "studio")
-        self.store.captures_dir.mkdir(parents=True, exist_ok=True)
-        (self.store.captures_dir / "cap1.jpg").write_bytes(b"\xff\xd8\xff\xd9")
-        self.weights_path = root / "best.pt"
-        self.weights_path.write_bytes(b"fake weights")
-
-    def _fake_torch(self, *, interop_raises: bool = False):
-        calls = {"num_threads": [], "interop_threads": []}
-        module = types.ModuleType("torch")
-
-        def set_num_threads(count):
-            calls["num_threads"].append(count)
-
-        def set_num_interop_threads(count):
-            calls["interop_threads"].append(count)
-            if interop_raises:
-                raise RuntimeError(
-                    "cannot set number of interop threads after parallel work has started"
-                )
-
-        module.set_num_threads = set_num_threads
-        module.set_num_interop_threads = set_num_interop_threads
-        return module, calls
-
-    def _fake_ultralytics(self):
-        loads = []
-
-        class FakeYOLO:
-            def __init__(self, weights):
-                loads.append(weights)
-
-            def to(self, device):
-                self.device = device
-
-        module = types.ModuleType("ultralytics")
-        module.YOLO = FakeYOLO
-        return module, loads
-
-    def _backend(self, **overrides) -> RealStudioBackend:
-        options = {"torch_threads": 2, "model_idle_unload_s": 0.0}
-        options.update(overrides)
-        backend = RealStudioBackend(
-            camera=None,
-            lift=None,
-            store=self.store,
-            weights_path=self.weights_path,
-            infer_path=self.weights_path,  # never read; module stubbed below
-            **options
-        )
-        backend._infer_module = types.SimpleNamespace(
-            segment_image=lambda *args, **kwargs: (None, [])
-        )
-        self.addCleanup(backend.shutdown)
-        return backend
-
-    def _segment_once(self, backend, torch_module, ultralytics_module) -> None:
-        with mock.patch.dict(
-            sys.modules, {"torch": torch_module, "ultralytics": ultralytics_module}
-        ):
-            result = backend.segment_capture("cap1", conf=0.5, imgsz=640)
-        self.assertEqual(result.capture_id, "cap1")
-
-    def test_model_load_caps_torch_threads(self):
-        torch_module, calls = self._fake_torch()
-        ultralytics_module, _loads = self._fake_ultralytics()
-        backend = self._backend(torch_threads=2)
-
-        self._segment_once(backend, torch_module, ultralytics_module)
-
-        self.assertEqual(calls["num_threads"], [2])
-        self.assertEqual(calls["interop_threads"], [1])
-
-    def test_model_load_tolerates_interop_threads_runtime_error(self):
-        torch_module, calls = self._fake_torch(interop_raises=True)
-        ultralytics_module, loads = self._fake_ultralytics()
-        backend = self._backend()
-
-        self._segment_once(backend, torch_module, ultralytics_module)
-
-        self.assertEqual(calls["num_threads"], [2])
-        self.assertEqual(len(loads), 1)
-        self.assertIsNotNone(backend._segment_model)
-
-    def test_idle_model_is_unloaded_and_reloaded_on_next_segment(self):
-        torch_module, _calls = self._fake_torch()
-        ultralytics_module, loads = self._fake_ultralytics()
-        backend = self._backend(model_idle_unload_s=0.05)
-
-        self._segment_once(backend, torch_module, ultralytics_module)
-        self.assertEqual(len(loads), 1)
-        self.assertIsNotNone(backend._segment_model)
-
-        deadline = time.monotonic() + 2.0
-        while backend._segment_model is not None and time.monotonic() < deadline:
-            time.sleep(0.01)
-        self.assertIsNone(backend._segment_model)
-
-        self._segment_once(backend, torch_module, ultralytics_module)
-        self.assertEqual(len(loads), 2)
-
-    def test_idle_unload_disabled_keeps_model_resident(self):
-        torch_module, _calls = self._fake_torch()
-        ultralytics_module, loads = self._fake_ultralytics()
-        backend = self._backend(model_idle_unload_s=0.0)
-
-        self._segment_once(backend, torch_module, ultralytics_module)
-        time.sleep(0.2)
-
-        self.assertIsNotNone(backend._segment_model)
-        self.assertIsNone(backend._idle_timer)
-        self._segment_once(backend, torch_module, ultralytics_module)
-        self.assertEqual(len(loads), 1)
-
-
 class RealStudioBackendHardwareStatusTests(unittest.TestCase):
     """The consolidated hardware view exposes the FK TCP pose next to joints."""
 
     def setUp(self):
         self._dirs = tempfile.TemporaryDirectory()
         self.addCleanup(self._dirs.cleanup)
-        root = Path(self._dirs.name)
-        self.weights_path = root / "best.pt"
-        self.weights_path.write_bytes(b"fake weights")
 
     def _backend(self, arm) -> RealStudioBackend:
         class StubLift:
@@ -945,8 +721,6 @@ class RealStudioBackendHardwareStatusTests(unittest.TestCase):
             camera=None,
             lift=StubLift(),
             store=StudioStore(root=Path(self._dirs.name) / "studio"),
-            weights_path=self.weights_path,
-            infer_path=self.weights_path,
             arm=arm,
         )
         self.addCleanup(backend.shutdown)
@@ -1058,8 +832,6 @@ class _RealBackendHttpTests(unittest.TestCase):
         self._dirs = tempfile.TemporaryDirectory()
         self.addCleanup(self._dirs.cleanup)
         root = Path(self._dirs.name)
-        self.weights_path = root / "best.pt"
-        self.weights_path.write_bytes(b"fake weights")
         self.runner = FakeWorkflowRunner(stage_delay_s=0.01)
         self.addCleanup(self.runner.shutdown)
         self.calibration_path = root / "calibration" / "camera_to_base.json"
@@ -1075,8 +847,6 @@ class _RealBackendHttpTests(unittest.TestCase):
             "lift": _StubLift(),
             "store": StudioStore(Path(self._dirs.name) / "studio"),
             "busy_lock": self.runner.busy_lock,
-            "weights_path": self.weights_path,
-            "infer_path": self.weights_path,
             "calibration_path": self.calibration_path,
             "calibration_example_path": self.example_path,
         }

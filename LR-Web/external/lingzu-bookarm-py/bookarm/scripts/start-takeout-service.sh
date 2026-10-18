@@ -33,9 +33,8 @@ fi
 
 cd "$BOOKARM_ROOT"
 # 编译版 wheel 安装后，bookarm 包内的路径默认解析不再指向本仓库，
-# 显式导出仓库根与同级推理目录（LR_BOOKARM_ROOT / LR_BOOKARM_INFERENCE_ROOT）
+# 显式导出仓库根（LR_BOOKARM_ROOT）。
 export LR_BOOKARM_ROOT="$BOOKARM_ROOT"
-export LR_BOOKARM_INFERENCE_ROOT="${LR_BOOKARM_INFERENCE_ROOT:-$BOOKARM_ROOT/../book_spine_inference_light}"
 
 TOKEN_ARGS=()
 if [[ -n "${LR_BOOKARM_TOKEN:-}" ]]; then
@@ -44,10 +43,8 @@ else
   echo "警告：LR_BOOKARM_TOKEN 未设置（$BOOKARM_ENV_FILE 缺失、不可读或为空）；BookArm 接口将以无鉴权模式运行。" >&2
 fi
 
-# 书脊库是生产数据，默认存到代码仓库之外；YOLO 权重显式传入（默认与 bookarm
-# 仓库同级的 book_spine_inference_light 检出；相对路径由 resolve_path 按仓库根解析）。
+# 书脊库是生产数据，默认存到代码仓库之外。
 STUDIO_DIR="${LR_BOOKARM_STUDIO_DIR:-/var/lib/lr-bookarm/spine_studio}"
-YOLO_WEIGHTS="${LR_BOOKARM_YOLO_WEIGHTS:-../book_spine_inference_light/weights/best.pt}"
 
 exec "$PYTHON_BIN" -m bookarm.service \
   --unix-socket "$SOCKET_PATH" \
@@ -55,6 +52,5 @@ exec "$PYTHON_BIN" -m bookarm.service \
   --hardware-lock-path "${LR_BOOKARM_HARDWARE_LOCK_PATH:-recordings/runtime/bookarm-hardware.lock}" \
   --shutdown-timeout-s "${LR_BOOKARM_SHUTDOWN_TIMEOUT_S:-10}" \
   --studio-dir "$STUDIO_DIR" \
-  --yolo-weights "$YOLO_WEIGHTS" \
   ${TOKEN_ARGS[@]+"${TOKEN_ARGS[@]}"} \
   "$@"

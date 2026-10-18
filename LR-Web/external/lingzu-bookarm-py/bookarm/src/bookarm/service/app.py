@@ -47,8 +47,6 @@ from bookarm.service.schemas import (
     RodMoveView,
     SafetyStopView,
     SegmentedSpineView,
-    SegmentRequest,
-    SegmentView,
     SelfCheckView,
     VisionDebugRunRequest,
     VisionDebugSpineCheckRequest,
@@ -63,7 +61,6 @@ from bookarm.service.studio import (
     CameraTransformError,
     CaptureRecord,
     CartesianJogError,
-    SegmentationUnavailableError,
     StudioBackend,
     StudioBusyError,
 )
@@ -452,30 +449,6 @@ def _build_studio_router(studio: StudioBackend, dependencies: List) -> APIRouter
         except KeyError as error:
             raise HTTPException(status_code=404, detail="unknown capture: %s" % capture_id) from error
         return FileResponse(path, media_type="image/jpeg")
-
-    @studio_router.post("/captures/{capture_id}/segment", response_model=SegmentView)
-    def segment_capture(capture_id: str, payload: SegmentRequest = SegmentRequest()) -> SegmentView:
-        try:
-            result = studio.segment_capture(capture_id, conf=payload.conf, imgsz=payload.imgsz)
-        except KeyError as error:
-            raise HTTPException(status_code=404, detail="unknown capture: %s" % capture_id) from error
-        except SegmentationUnavailableError as error:
-            raise HTTPException(status_code=503, detail=str(error)) from error
-        return SegmentView(
-            capture_id=result.capture_id,
-            spine_count=len(result.spines),
-            spines=[
-                SegmentedSpineView(
-                    library_id=spine.library_id,
-                    index=spine.index,
-                    confidence=spine.confidence,
-                    area=spine.area,
-                    bbox_xyxy=list(spine.bbox_xyxy),
-                    polygon_xy=[list(point) for point in spine.polygon_xy],
-                )
-                for spine in result.spines
-            ],
-        )
 
     @studio_router.post(
         "/captures/{capture_id}/manual-segment",

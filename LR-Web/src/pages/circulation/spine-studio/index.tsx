@@ -4,9 +4,7 @@ import {
   EditOutlined,
   ExperimentOutlined,
   PlayCircleOutlined,
-  QuestionCircleOutlined,
   ReloadOutlined,
-  ScanOutlined,
   SearchOutlined,
   ZoomInOutlined,
 } from '@ant-design/icons';
@@ -27,11 +25,10 @@ import {
   Row,
   Select,
   Space,
-  Tooltip,
   Typography,
 } from 'antd';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   createBook,
   DEFAULT_BOOK_HEIGHT_MM,
@@ -47,17 +44,13 @@ import {
   getVehicleAlignStatus,
   getVisionDebugGap,
   type LibraryItem,
-  libraryImageUrl,
   listLibrary,
   manualSegmentCapture,
   moveLift,
   resetArmToDebugPose,
   runVisionDebug,
-  type SegmentResult,
   StudioApiError,
   type StudioCapture,
-  type StudioSpine,
-  segmentCapture,
   type VehicleAlignStatus,
   type VisionAlignRunResult,
   type VisionDebugGapMeta,
@@ -80,70 +73,6 @@ function formatTimestamp(timestamp: string | undefined) {
   return Number.isNaN(date.getTime())
     ? timestamp
     : date.toLocaleString('zh-CN', { hour12: false });
-}
-
-function revokeUrls(urls: Record<string, string>) {
-  for (const url of Object.values(urls)) URL.revokeObjectURL(url);
-}
-
-/** Draw the capture with numbered detection outlines for visual review. */
-function AnnotatedCapture({
-  imageUrl,
-  spines,
-}: {
-  imageUrl: string;
-  spines: StudioSpine[];
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext('2d');
-    if (!canvas || !ctx) return;
-    const img = new Image();
-    img.onload = () => {
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      ctx.drawImage(img, 0, 0);
-      const lineWidth = Math.max(2, img.naturalWidth / 400);
-      const fontSize = Math.max(16, img.naturalWidth / 36);
-      spines.forEach((spine, order) => {
-        const color = `hsl(${(order * 47) % 360}, 90%, 42%)`;
-        ctx.strokeStyle = color;
-        ctx.lineWidth = lineWidth;
-        let labelX = spine.bbox_xyxy[0];
-        let labelY = spine.bbox_xyxy[1];
-        if (spine.polygon_xy.length >= 3) {
-          ctx.beginPath();
-          ctx.moveTo(spine.polygon_xy[0][0], spine.polygon_xy[0][1]);
-          for (const [x, y] of spine.polygon_xy.slice(1)) ctx.lineTo(x, y);
-          ctx.closePath();
-          ctx.stroke();
-          labelX = spine.polygon_xy[0][0];
-          labelY = spine.polygon_xy[0][1];
-        } else {
-          const [x1, y1, x2, y2] = spine.bbox_xyxy;
-          ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-        }
-        const label = String(spine.index + 1);
-        ctx.font = `bold ${fontSize}px sans-serif`;
-        const textWidth = ctx.measureText(label).width;
-        const boxY = Math.max(0, labelY - fontSize * 1.25 - lineWidth);
-        ctx.fillStyle = color;
-        ctx.fillRect(labelX, boxY, textWidth + fontSize * 0.6, fontSize * 1.25);
-        ctx.fillStyle = '#ffffff';
-        ctx.fillText(label, labelX + fontSize * 0.3, boxY + fontSize);
-      });
-    };
-    img.src = imageUrl;
-  }, [imageUrl, spines]);
-
-  return (
-    <canvas
-      ref={canvasRef}
-      style={{ maxWidth: '100%', borderRadius: 8, marginBottom: 16 }}
-    />
-  );
 }
 
 type MoveFormValues = {
@@ -301,9 +230,6 @@ export default function SpineStudioPage() {
   const [capture, setCapture] = useState<StudioCapture>();
   const [captureUrl, setCaptureUrl] = useState<string>();
   const [capturing, setCapturing] = useState(false);
-  const [segmenting, setSegmenting] = useState(false);
-  const [segmentResult, setSegmentResult] = useState<SegmentResult>();
-  const [spineUrls, setSpineUrls] = useState<Record<string, string>>({});
   const [books, setBooks] = useState<Book[]>([]);
   const [resettingArm, setResettingArm] = useState(false);
   const [thermal, setThermal] = useState<ArmThermalStatus>();
@@ -335,11 +261,6 @@ export default function SpineStudioPage() {
   const [manualName, setManualName] = useState('');
   const [manualSaving, setManualSaving] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
-  // YOLO 分割结果「命名为书籍」弹窗。
-  const [namingSpine, setNamingSpine] = useState<StudioSpine>();
-  const [namingName, setNamingName] = useState('');
-  const [namingHeightMm, setNamingHeightMm] = useState(DEFAULT_BOOK_HEIGHT_MM);
-  const [namingSaving, setNamingSaving] = useState(false);
   // 手动分割图已入库但建书失败：保留 library_id 供本页直接重试命名。
   const [retryImport, setRetryImport] = useState<{
     libraryId: string;
@@ -556,13 +477,8 @@ export default function SpineStudioPage() {
         if (previous) URL.revokeObjectURL(previous);
         return url;
       });
-      setSegmentResult(undefined);
       setManualMode(false);
       setManualPoints([]);
-      setSpineUrls((previous) => {
-        revokeUrls(previous);
-        return {};
-      });
       message.success(`已拍摄第 ${created.frame_number} 帧。`);
     } catch (error) {
       if (error instanceof StudioApiError && error.status === 409) {
@@ -572,49 +488,6 @@ export default function SpineStudioPage() {
       }
     } finally {
       setCapturing(false);
-    }
-  }
-
-  async function runSegment() {
-    if (!capture) return;
-    setSegmenting(true);
-    try {
-      const result = await segmentCapture(capture.id);
-      setSegmentResult(result);
-      const entries = await Promise.all(
-        result.spines.map(
-          async (spine) =>
-            [
-              spine.library_id,
-              await libraryImageUrl(spine.library_id),
-            ] as const,
-        ),
-      );
-      const urls = Object.fromEntries(entries);
-      setSpineUrls((previous) => {
-        revokeUrls(previous);
-        return urls;
-      });
-      if (result.spine_count === 0) {
-        message.warning(
-          '未识别到书脊：请调整视角、光照或拉近拍摄距离后重新拍摄。',
-        );
-      } else {
-        message.success(`识别到 ${result.spine_count} 个书脊，已保存分割图。`);
-      }
-      if (result.selfCheck && !result.selfCheck.ok) {
-        message.warning(
-          `特征不足，建议重拍：${result.selfCheck.detail ?? '分割图可能无法被稳定识别。'}`,
-        );
-      }
-    } catch (error) {
-      if (error instanceof StudioApiError && error.status === 503) {
-        message.error(`书脊分割暂不可用：${error.message}`);
-      } else {
-        message.error(errorMessage(error, '书脊分割失败。'));
-      }
-    } finally {
-      setSegmenting(false);
     }
   }
 
@@ -721,39 +594,6 @@ export default function SpineStudioPage() {
       );
     } finally {
       setRetrySaving(false);
-    }
-  }
-
-  function openNameBook(spine: StudioSpine) {
-    setNamingSpine(spine);
-    setNamingName('');
-    setNamingHeightMm(defaultBookHeightMm());
-  }
-
-  async function nameBookAsNew() {
-    if (!namingSpine) return;
-    const name = namingName.trim();
-    if (!name) {
-      message.warning('请输入书名。');
-      return;
-    }
-    setNamingSaving(true);
-    try {
-      if (books.some((book) => book.name === name)) {
-        message.warning(`已存在同名书籍《${name}》，请注意区分。`);
-      }
-      await createBook({
-        name,
-        templateId: namingSpine.library_id,
-        heightMm: namingHeightMm,
-      });
-      message.success(`《${name}》已导入书籍管理。`);
-      setNamingSpine(undefined);
-      await refreshBooks();
-    } catch (error) {
-      message.error(errorMessage(error, '导入书籍管理失败。'));
-    } finally {
-      setNamingSaving(false);
     }
   }
 
@@ -911,8 +751,8 @@ export default function SpineStudioPage() {
 
   return (
     <PageContainer
-      title="书脊分割工作台"
-      content="控制升降台到目标层高并拍摄书架照片；YOLO 候选可用于快速取书 / 末尾还书，手动勾勒分割并填写书名后直接导入书籍管理。"
+      title="书脊工作台（手动分割）"
+      content="控制升降台到目标层高并拍摄书架照片；手动勾勒书脊并填写书名后直接导入书籍管理。"
     >
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={9}>
@@ -984,7 +824,7 @@ export default function SpineStudioPage() {
 
         <Col xs={24} xl={15}>
           <Card
-            title="拍摄与分割"
+            title="拍摄与手动分割"
             extra={
               <Space wrap>
                 <Button
@@ -993,15 +833,6 @@ export default function SpineStudioPage() {
                   loading={capturing}
                 >
                   开始拍摄
-                </Button>
-                <Button
-                  type="primary"
-                  icon={<ScanOutlined />}
-                  onClick={runSegment}
-                  loading={segmenting}
-                  disabled={!capture}
-                >
-                  开始分割
                 </Button>
                 <Button
                   icon={<EditOutlined />}
@@ -1013,15 +844,6 @@ export default function SpineStudioPage() {
               </Space>
             }
           >
-            {segmenting ? (
-              <Alert
-                showIcon
-                type="info"
-                title="正在分割书脊"
-                description="YOLO 分割耗时较长，请耐心等待，期间请勿离开本页。"
-                style={{ marginBottom: 16 }}
-              />
-            ) : null}
             {capture && captureUrl ? (
               manualMode ? (
                 <>
@@ -1044,46 +866,15 @@ export default function SpineStudioPage() {
                 </>
               ) : (
                 <>
-                  {segmentResult ? (
-                    <Row gutter={[16, 16]}>
-                      <Col xs={24} lg={12}>
-                        <Typography.Text type="secondary">
-                          原始图像
-                        </Typography.Text>
-                        <div>
-                          <img
-                            src={captureUrl}
-                            alt={`第 ${capture.frame_number} 帧拍摄图像`}
-                            style={{
-                              maxWidth: '100%',
-                              borderRadius: 8,
-                              marginBottom: 16,
-                            }}
-                          />
-                        </div>
-                      </Col>
-                      <Col xs={24} lg={12}>
-                        <Typography.Text type="secondary">
-                          识别标注（{segmentResult.spine_count}{' '}
-                          个书脊，序号与下方书脊图一一对应）
-                        </Typography.Text>
-                        <AnnotatedCapture
-                          imageUrl={captureUrl}
-                          spines={segmentResult.spines}
-                        />
-                      </Col>
-                    </Row>
-                  ) : (
-                    <img
-                      src={captureUrl}
-                      alt={`第 ${capture.frame_number} 帧拍摄图像`}
-                      style={{
-                        maxWidth: '100%',
-                        borderRadius: 8,
-                        marginBottom: 16,
-                      }}
-                    />
-                  )}
+                  <img
+                    src={captureUrl}
+                    alt={`第 ${capture.frame_number} 帧拍摄图像`}
+                    style={{
+                      maxWidth: '100%',
+                      borderRadius: 8,
+                      marginBottom: 16,
+                    }}
+                  />
                   <Descriptions
                     column={{ xs: 1, md: 3 }}
                     size="small"
@@ -1107,70 +898,6 @@ export default function SpineStudioPage() {
                 description="尚未拍摄，请先开始拍摄"
               />
             )}
-            {segmentResult ? (
-              <>
-                {segmentResult.spine_count === 0 ? (
-                  <Alert
-                    showIcon
-                    type="warning"
-                    title="未识别到书脊"
-                    description="请调整视角、光照或拉近拍摄距离后重新拍摄；也可切换手动分割勾勒书脊。"
-                    style={{ marginBottom: 16 }}
-                  />
-                ) : (
-                  <Alert
-                    showIcon
-                    type="success"
-                    title={`识别到 ${segmentResult.spine_count} 个书脊`}
-                    style={{ marginBottom: 16 }}
-                  />
-                )}
-                {segmentResult.selfCheck && !segmentResult.selfCheck.ok ? (
-                  <Alert
-                    showIcon
-                    type="warning"
-                    title="特征不足，建议重拍"
-                    description={
-                      segmentResult.selfCheck.detail ??
-                      '分割出的书脊图特征点过少，识别成功率低，建议重新拍摄。'
-                    }
-                    style={{ marginBottom: 16 }}
-                  />
-                ) : null}
-                <Row gutter={[8, 8]}>
-                  {segmentResult.spines.map((spine) => (
-                    <Col key={spine.library_id} xs={8} sm={6} md={4}>
-                      <div style={{ textAlign: 'center' }}>
-                        {spineUrls[spine.library_id] ? (
-                          <img
-                            src={spineUrls[spine.library_id]}
-                            alt={`书脊 ${spine.index + 1}`}
-                            style={{
-                              maxWidth: '100%',
-                              maxHeight: 160,
-                              borderRadius: 8,
-                            }}
-                          />
-                        ) : null}
-                        <div>
-                          <Typography.Text type="secondary">
-                            书脊 {spine.index + 1} · 置信度{' '}
-                            {spine.confidence.toFixed(3)}
-                          </Typography.Text>
-                        </div>
-                        <Button
-                          size="small"
-                          type="link"
-                          onClick={() => openNameBook(spine)}
-                        >
-                          命名为书籍
-                        </Button>
-                      </div>
-                    </Col>
-                  ))}
-                </Row>
-              </>
-            ) : null}
           </Card>
         </Col>
       </Row>
@@ -1679,50 +1406,6 @@ export default function SpineStudioPage() {
             />
           </>
         ) : null}
-      </Modal>
-      <Modal
-        destroyOnHidden
-        open={namingSpine !== undefined}
-        title="命名为书籍"
-        okText="导入书籍管理"
-        cancelText="取消"
-        confirmLoading={namingSaving}
-        onCancel={() => setNamingSpine(undefined)}
-        onOk={() => void nameBookAsNew()}
-      >
-        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
-          <Typography.Text type="secondary">
-            将书脊 {namingSpine !== undefined ? namingSpine.index + 1 : ''}{' '}
-            的分割图登记为一本新书（书脊图已自动关联）。
-          </Typography.Text>
-          <div>
-            <Typography.Text>书名</Typography.Text>
-            <Input
-              value={namingName}
-              maxLength={80}
-              placeholder="例如：深入理解计算机系统"
-              onChange={(event) => setNamingName(event.target.value)}
-            />
-          </div>
-          <div>
-            <Typography.Text>
-              取书高度（升降台 mm）{' '}
-              <Tooltip title="该书所在层的升降台目标高度，非书本物理高度；已按当前实测升降高度预填。">
-                <QuestionCircleOutlined />
-              </Tooltip>
-            </Typography.Text>
-            <InputNumber
-              style={{ width: '100%' }}
-              min={10}
-              max={1700}
-              precision={0}
-              value={namingHeightMm}
-              onChange={(value) =>
-                setNamingHeightMm(Number(value ?? DEFAULT_BOOK_HEIGHT_MM))
-              }
-            />
-          </div>
-        </Space>
       </Modal>
       <Modal
         destroyOnHidden

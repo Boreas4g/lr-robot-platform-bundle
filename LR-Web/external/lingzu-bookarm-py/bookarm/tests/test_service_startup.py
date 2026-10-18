@@ -17,13 +17,6 @@ class StudioStorageDefaultTests(unittest.TestCase):
         self.assertEqual(DEFAULT_STUDIO_DIR, Path("/var/lib/lr-bookarm/spine_studio"))
         self.assertEqual(parse_args([]).studio_dir, DEFAULT_STUDIO_DIR)
 
-    def test_default_yolo_weights_track_the_inference_checkout(self):
-        weights = parse_args([]).yolo_weights
-        self.assertEqual(
-            Path(*weights.parts[-3:]),
-            Path("book_spine_inference_light") / "weights" / "best.pt",
-        )
-
 
 class UnixSocketPreparationTests(unittest.TestCase):
     def setUp(self) -> None:

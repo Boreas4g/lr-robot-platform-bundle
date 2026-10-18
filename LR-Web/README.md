@@ -60,4 +60,4 @@ docker compose -f infra/docker-compose/docker-compose.yml up -d
 - 底盘速度需经过 `twist_mux`、`collision_monitor` 后才到 `/cmd_vel`。
 - 机械臂由唯一 Arm Bridge 占用 CAN，禁止多个进程并发控制。
 - 精细控制要求维护角色、控制租约、速度/行程限制、硬件急停和审计。
-- 书脊分割仅用于检测书本边界；创建实体书前必须 OCR/条码/RFID 或人工审核。
+- 手动书脊分割仅用于检测书本边界；创建实体书前必须 OCR/条码/RFID 或人工审核。

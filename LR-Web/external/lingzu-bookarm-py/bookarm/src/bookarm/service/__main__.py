@@ -24,10 +24,6 @@ from typing import Any, Callable, Optional, Sequence
 
 
 BOOKARM_ROOT = Path(os.environ.get("LR_BOOKARM_ROOT") or Path(__file__).resolve().parents[3])
-INFERENCE_ROOT = Path(
-    os.environ.get("LR_BOOKARM_INFERENCE_ROOT")
-    or Path(__file__).resolve().parents[4] / "book_spine_inference_light"
-)
 DEFAULT_UPLOAD_DIR = BOOKARM_ROOT / "recordings" / "takeout_templates"
 # The spine studio holds production library data, so it lives outside the
 # code repository: a redeploy or a wiped checkout must never drop templates.
@@ -42,7 +38,6 @@ DEFAULT_CAMERA_CALIBRATION = BOOKARM_ROOT / "config" / "calibration" / "camera_t
 # User-refined extrinsic written by the studio camera-transform API; when it
 # exists it wins over the packaged example at startup.
 DEFAULT_CAMERA_CALIBRATION_OVERRIDE = BOOKARM_ROOT / "config" / "calibration" / "camera_to_base.json"
-DEFAULT_YOLO_WEIGHTS = INFERENCE_ROOT / "weights" / "best.pt"
 _GUI_INERTIA = Path(__file__).resolve().parents[4] / "resources" / "config" / "inertia_params.yaml"
 DEFAULT_ARM_INERTIA = (
     _GUI_INERTIA
@@ -108,31 +103,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--studio-dir",
         type=Path,
         default=DEFAULT_STUDIO_DIR,
-        help="书脊分割工作台的拍照/分割/书脊库存储目录。",
-    )
-    parser.add_argument(
-        "--yolo-weights",
-        type=Path,
-        default=DEFAULT_YOLO_WEIGHTS,
-        help="书脊分割 YOLO 权重 best.pt；缺失时分割接口返回 503。",
-    )
-    parser.add_argument(
-        "--yolo-infer",
-        type=Path,
-        help="书脊分割 infer.py 路径；默认取权重同级目录下的 infer.py。",
-    )
-    parser.add_argument(
-        "--yolo-threads",
-        type=int,
-        default=2,
-        choices=[1, 2, 3, 4],
-        help="YOLO 分割时 torch 使用的 CPU 线程数，避免占满全部核心。",
-    )
-    parser.add_argument(
-        "--yolo-idle-unload-s",
-        type=float,
-        default=300.0,
-        help="YOLO 模型闲置多少秒后从内存卸载（0 = 永不卸载）。",
+        help="书脊工作台的拍照/书脊库存储目录。",
     )
     parser.add_argument("--slots-path", type=Path, default=DEFAULT_SLOTS, help="书立槽位标定 JSON（取书）。")
     parser.add_argument(
@@ -219,12 +190,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     upload_dir = resolve_path(args.upload_dir)
-    yolo_weights = resolve_path(args.yolo_weights)
-    yolo_infer = (
-        resolve_path(args.yolo_infer)
-        if args.yolo_infer is not None
-        else yolo_weights.parent.parent / "infer.py"
-    )
 
     from bookarm.application.task_manager import JsonTaskStore, TaskManager
 
@@ -356,10 +321,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             busy_lock=runner.busy_lock,
             vehicle=combined.vehicle,
             plan_getter=take_book_plan_getter(combined.runtime.sdk),
-            weights_path=yolo_weights,
-            infer_path=yolo_infer,
-            torch_threads=args.yolo_threads,
-            model_idle_unload_s=args.yolo_idle_unload_s,
             arm=combined.arm,
             rod=combined.rod,
         )

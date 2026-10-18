@@ -123,13 +123,6 @@ class CaptureView(BaseModel):
     created_at: str
 
 
-class SegmentRequest(BaseModel):
-    """Optional JSON body overriding YOLO segmentation thresholds."""
-
-    conf: float = Field(default=0.6, gt=0.0, le=1.0)
-    imgsz: int = Field(default=640, ge=32)
-
-
 class VisionDebugSpineCheckRequest(BaseModel):
     """书脊倾斜/居中调试请求：指定书脊库模板。"""
 
@@ -164,14 +157,6 @@ class SegmentedSpineView(BaseModel):
     # Populated by manual-segment so the operator learns immediately whether
     # the freshly stored template can be recognized at take-out time.
     selfCheck: Optional[SelfCheckView] = None
-
-
-class SegmentView(BaseModel):
-    """JSON view of all spines segmented from one capture."""
-
-    capture_id: str
-    spine_count: int
-    spines: List[SegmentedSpineView]
 
 
 class LibraryItemView(BaseModel):

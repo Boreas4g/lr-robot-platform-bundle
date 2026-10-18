@@ -40,14 +40,6 @@ export type StudioSpine = {
   polygon_xy: number[][];
 };
 
-export type SegmentResult = {
-  capture_id: string;
-  spine_count: number;
-  spines: StudioSpine[];
-  /** 导入/分割自检：特征不足时 ok=false 并给出 detail。 */
-  selfCheck?: SelfCheck;
-};
-
 export type LibraryItem = {
   id: string;
   capture_id: string;
@@ -72,11 +64,6 @@ export type LibraryVerifyItem = {
   name?: string;
   ok: boolean;
   detail?: string;
-};
-
-export type SegmentOptions = {
-  conf?: number;
-  imgsz?: number;
 };
 
 export type ManualSegmentOptions = {
@@ -153,17 +140,6 @@ export async function moveLift(
 
 export async function createCapture(): Promise<StudioCapture> {
   return studioRequest('/captures', { method: 'POST' });
-}
-
-export async function segmentCapture(
-  id: string,
-  options: SegmentOptions = {},
-): Promise<SegmentResult> {
-  return studioRequest(`/captures/${encodeURIComponent(id)}/segment`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(options),
-  });
 }
 
 /** Store one hand-drawn spine polygon as a named library template. */

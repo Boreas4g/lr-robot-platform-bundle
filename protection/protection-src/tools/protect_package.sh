@@ -2,7 +2,7 @@
 # 用法: protect_package.sh <源包目录(lr-oneclick 明文)> <输出目录> <wheels目录>
 # 把明文一键部署包转换为「受保护部署包」：
 #   - ROS 4 个自研 Python 包 .py → .so（注入许可证校验，setup.py 加 package_data）
-#   - control-api / infer.py / 独立运维脚本 → .so（+加载器）
+#   - control-api / 独立运维脚本 → .so（+加载器）
 #   - aim_sdk/bookarm 源码删除，改由 wheels 目录的编译版 wheel 提供
 #   - 新增 protection/（守护模块、CLI、vendor-tools）与 deploy.sh 的 license 阶段
 # 前提：
@@ -53,11 +53,7 @@ echo "== 3/9 control-api 编译"
   --exclude '(^|/)(setup\.py|_lr_cython_setup\.py|__init__\.py)$|\.launch\.py$|__pycache__|(^|/)(test|tests|examples)/' | tail -1
 rm -rf "$C/LR-Web/apps/control-api/tests"
 
-echo "== 4/9 infer.py 编译"
-/home/boreas/miniconda3/envs/bookarm/bin/python "$T/cythonize_tree.py" \
-  "$C/book_spine_inference_light" | tail -1
-
-echo "== 5/9 独立脚本编译"
+echo "== 4/8 独立脚本编译"
 # sync-robot-maps/map-registry 原本从 src 树 import robot_decision；
 # 受保护流程删除 src 后须改指 install 树 site-packages
 python3 - "$C/Library_robot/scripts/sync-robot-maps.py" "$C/Library_robot/scripts/map-registry.py" <<'EOY'
@@ -78,13 +74,13 @@ rm -f "$C/Library_robot/scripts/test_mapping_agent.py"
 bash "$T/compile_script.sh" /usr/bin/python3 "$C/LR-Web/scripts/lr-host-start-agent.py" | tail -1
 bash "$T/compile_script.sh" /usr/bin/python3 "$C/LR-Web/scripts/lr-station-discovery.py" | tail -1
 
-echo "== 6/9 wheels 取代 aim_sdk/bookarm 源码"
+echo "== 5/8 wheels 取代 aim_sdk/bookarm 源码"
 mkdir -p "$C/wheels"
 cp "$WHEELS"/*.whl "$C/wheels/"
 rm -rf "$C/aim_sdk"
 rm -rf "$C/bookarm/src" "$C/bookarm/pyproject.toml" "$C/bookarm/tests" 2>/dev/null || true
 
-echo "== 7/9 protection/ 目录"
+echo "== 6/8 protection/ 目录"
 P="$OUT/protection"
 mkdir -p "$P/vendor-tools"
 install -m 0644 "$GD/py312/lr_license_guard.cpython-312-x86_64-linux-gnu.so" "$P/"
@@ -113,7 +109,7 @@ cat > "$P/vendor-tools/README.md" <<'EOF'
 许可证永久有效，仅绑定签发时的机器码（根盘序列号）。客户换硬盘/换机需重新签发。
 EOF
 
-echo "== 7.5/9 安装脚本补 impl .so"
+echo "== 6.5/8 安装脚本补 impl .so"
 python3 - "$C/LR-Web/scripts/install-host-start-agent.sh" "$C/LR-Web/scripts/install-control-station-appliance.sh" <<'EOF'
 import sys
 p1, p2 = sys.argv[1], sys.argv[2]
@@ -130,7 +126,7 @@ open(p2, "w", encoding="utf-8").write(s)
 print("两个安装脚本已补 impl .so")
 EOF
 
-echo "== 8/9 deploy.sh 改造"
+echo "== 7/8 deploy.sh 改造"
 python3 - "$OUT/deploy.sh" <<'EOF'
 import sys
 p = sys.argv[1]

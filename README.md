@@ -26,7 +26,7 @@ lr-station-discovery.service ──> 局域网发现广播
 
 | 路径 | 内容 | 来源 |
 | --- | --- | --- |
-| `LR-Web/` | **控制站主仓库完整工作树**：前端源码 `src/`、构建产物 `dist/`（:8000 托管的数据）、`apps/control-api/`（FastAPI :8080）、`apps/edge-gateway/`、`external/lingzu-bookarm-py/`（**机械臂服务 + D435 书脊视觉识别 + YOLO 权重 + 标定数据**）、`external/Library_robot/`（**ROS2 车端源码镜像：car_ctrl 底盘电机驱动、robot_decision 边缘网关/决策、nav2_minimal_bringup 导航、dual_laser_merger 雷达合并、cartographer 建图、语音交互、realsense/lslidar 驱动、地图**）、`external/rod-motor-firmware/`（ESP32 杆电机固件）、`scripts/` 运维脚本、`desktop/` 桌面端、`cloudflare-worker/`、`infra/`、`contracts/`、`docs/` | `/home/boreas/project/LR/LR-Web` |
+| `LR-Web/` | **控制站主仓库完整工作树**：前端源码 `src/`、构建产物 `dist/`（:8000 托管的数据）、`apps/control-api/`（FastAPI :8080）、`apps/edge-gateway/`、`external/lingzu-bookarm-py/`（**机械臂服务 + D435 书脊视觉识别 + 标定数据**）、`external/Library_robot/`（**ROS2 车端源码镜像：car_ctrl 底盘电机驱动、robot_decision 边缘网关/决策、nav2_minimal_bringup 导航、dual_laser_merger 雷达合并、cartographer 建图、语音交互、realsense/lslidar 驱动、地图**）、`external/rod-motor-firmware/`（ESP32 杆电机固件）、`scripts/` 运维脚本、`desktop/` 桌面端、`cloudflare-worker/`、`infra/`、`contracts/`、`docs/` | `/home/boreas/project/LR/LR-Web` |
 | `drivers/aim_sdk/` | YZ-AIM 一体化伺服电机 Python SDK（RS485/Modbus，升降台驱动，bookarm 硬件依赖，未被 vendor 进任何仓库） | `/home/boreas/LR/lingzu-bookarm-py/aim_sdk` |
 | `drivers/rf2o_laser_odometry/` | 激光雷达 2D 里程计 ROS2 包（含本机未提交的 `/scan_f` 话题适配） | `/home/boreas/rf2o_laser_odometry` |
 | `drivers/robot_4wd_dds115_base_controller/` | 4WD DDSM115 轮毂电机 RS485 控制器（ROS1 版，含本机测试脚本） | `/home/boreas/robot_4wd_dds115_base_controller` |
@@ -50,12 +50,6 @@ lr-station-discovery.service ──> 局域网发现广播
 `~/realsense_ros/`（上游干净克隆 realsenseai/realsense-ros @4.57.7，源码已 vendor 进 ROS 工作区）、
 `~/project/lingzu_arm/`（bookarm 退役快照，落后 5 个提交）、`~/project/rod-motor-firmware/`（与 external 逐字节一致）、
 `LR-Web/lr-oneclick-deploy-20261008.tar.gz`（410M 旧部署归档，含凭据）。
-
-## 大文件说明
-
-`LR-Web/external/lingzu-bookarm-py/book_spine_inference_light/weights/best.pt`（120M，书脊识别
-YOLO 权重）超过 GitHub 单文件 100MB 限制，通过 **Git LFS** 管理（`*.pt` 已 track）。
-克隆本仓库需先 `git lfs install` 再 `git lfs pull`。完整 tar.gz 打包版中也包含该文件。
 
 ## 恢复要点
 

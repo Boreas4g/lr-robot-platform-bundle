@@ -1,15 +1,14 @@
-"""Book-spine segmentation workbench behind the ``/api/v1/studio`` routes.
+"""Book-spine workbench behind the ``/api/v1/studio`` routes.
 
 The studio lets an operator jog the lift, photograph the shelf with the D435
-camera, segment the photo into individual book spines and keep the crops in a
-persistent library. Workflow submissions can then reference a library image
-by ``template_id`` instead of uploading a fresh file.
+camera and build the spine template library by drawing each spine by hand.
+Workflow submissions can then reference a library image by ``template_id``
+instead of uploading a fresh file.
 
-``RealStudioBackend`` drives the shared camera and lift, and runs the YOLO
-segmentation script lazily so deployments without ultralytics keep every
-other endpoint working. ``FakeStudioBackend`` simulates the whole loop for
-tests and demonstrations. Both serialize camera/lift actions against workflow
-execution through the runner's busy lock.
+``RealStudioBackend`` drives the shared camera and lift.
+``FakeStudioBackend`` simulates the whole loop for tests and demonstrations.
+Both serialize camera/lift actions against workflow execution through the
+runner's busy lock.
 """
 
 from __future__ import annotations
@@ -18,15 +17,12 @@ from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import gc
-import importlib.util
 import json
 import math
 import os
 from pathlib import Path
 import re
 import shutil
-import sys
 import tempfile
 import threading
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple
@@ -51,12 +47,8 @@ from bookarm.domain.models.book import SpineTemplate
 from bookarm.domain.models.pose import BasePose, JointPose
 
 
-# Recommended inference parameters for the book-spine segmentation model.
-SEGMENT_IOU = 0.6
-SEGMENT_PAD = 8
-SEGMENT_RETINA_MASKS = False
-SEGMENT_MAX_DET = 30
-SEGMENT_DEVICE = "cpu"
+# Padding applied to hand-drawn spine crops before they enter the library.
+MANUAL_CROP_PAD = 8
 
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 MANUAL_NAME_MAX = 60
@@ -133,10 +125,6 @@ def _manual_masked_crop(
 
 class StudioBusyError(RuntimeError):
     """Raised when a studio action collides with a running workflow task."""
-
-
-class SegmentationUnavailableError(RuntimeError):
-    """Raised when the YOLO segmentation stack cannot be loaded."""
 
 
 class ArmUnavailableError(RuntimeError):
@@ -321,14 +309,6 @@ class SegmentedSpine:
 
 
 @dataclass(frozen=True)
-class SegmentResult:
-    """All spines segmented from one capture."""
-
-    capture_id: str
-    spines: Tuple[SegmentedSpine, ...]
-
-
-@dataclass(frozen=True)
 class TemplateSelfCheck:
     """Recognizability verdict for one stored library template."""
 
@@ -380,7 +360,7 @@ class StudioStore:
     Layout under the configured root directory::
 
         captures/<id>.jpg        shelf photos taken through the studio
-        segments/<capture_id>/   intermediate overlay/masked segmentation files
+        segments/<capture_id>/   hand-drawn spine crops kept for review
         library/<id>.png         rectified spine crops usable as templates
         library/manifest.json    id -> {capture_id, spine_index, confidence, created_at}
     """
@@ -636,24 +616,20 @@ class StudioBackend(ABC):
     def capture(self) -> CaptureRecord:
         """Photograph the shelf and store the frame as one capture."""
 
-    @abstractmethod
-    def segment_capture(self, capture_id: str, *, conf: float, imgsz: int) -> SegmentResult:
-        """Segment one capture into library spines; raise KeyError if unknown."""
-
     def segment_capture_manual(
         self,
         capture_id: str,
         polygon: Any,
         *,
         name: str,
-        pad: int = SEGMENT_PAD,
+        pad: int = MANUAL_CROP_PAD,
     ) -> SegmentedSpine:
         """Store one hand-drawn spine polygon as a named library template.
 
-        No camera access or YOLO stack is needed: the crop comes from the
-        stored capture JPEG, so this works on every backend. The masked crop
-        (transparent outside the polygon) is kept next to the YOLO
-        intermediates and copied into the library like any segmented spine.
+        No camera access is needed: the crop comes from the stored capture
+        JPEG, so this works on every backend. The masked crop (transparent
+        outside the polygon) is copied into the library like any other spine
+        crop.
         """
 
         image_path = self._store.capture_image_path(capture_id)
@@ -839,15 +815,7 @@ class StudioBackend(ABC):
 
 
 class RealStudioBackend(StudioBackend):
-    """Studio operations on the shared D435 camera and AIM lift.
-
-    The YOLO weights and inference module are loaded lazily on the first
-    segmentation request, so the rest of the service keeps working when
-    ultralytics is not installed. Torch intra-op threads are capped via
-    ``torch_threads`` so segmentation does not saturate every core, and the
-    model is dropped from memory after ``model_idle_unload_s`` seconds of
-    inactivity (``0`` keeps it resident forever).
-    """
+    """Studio operations on the shared D435 camera and AIM lift."""
 
     def __init__(
         self,
@@ -856,10 +824,6 @@ class RealStudioBackend(StudioBackend):
         store: StudioStore,
         *,
         busy_lock: Optional[threading.Lock] = None,
-        weights_path: Path,
-        infer_path: Path,
-        torch_threads: int = 2,
-        model_idle_unload_s: float = 300.0,
         arm: Optional[ArmService] = None,
         rod: Optional[RodMotorService] = None,
         calibration_path: Path = DEFAULT_CAMERA_TRANSFORM_PATH,
@@ -876,14 +840,6 @@ class RealStudioBackend(StudioBackend):
         self._rod = rod
         self._calibration_path = Path(calibration_path)
         self._calibration_example_path = Path(calibration_example_path)
-        self._weights_path = Path(weights_path)
-        self._infer_path = Path(infer_path)
-        self._torch_threads = int(torch_threads)
-        self._model_idle_unload_s = float(model_idle_unload_s)
-        self._model_lock = threading.Lock()
-        self._segment_model: Any = None
-        self._infer_module: Any = None
-        self._idle_timer: Optional[threading.Timer] = None
 
     def read_height_mm(self) -> float:
         return float(self._lift.read_lift_height_mm())
@@ -1349,140 +1305,6 @@ class RealStudioBackend(StudioBackend):
         self._camera.set_calibration(example.matrix.tolist())
         return self.camera_transform_view()
 
-    def segment_capture(self, capture_id: str, *, conf: float, imgsz: int) -> SegmentResult:
-        try:
-            image_path = self._store.capture_image_path(capture_id)
-            module = self._load_infer_module()
-            model = self._load_segment_model()
-            _overlay_path, crops = module.segment_image(
-                model,
-                image_path,
-                self._store.segments_dir,
-                int(imgsz),
-                float(conf),
-                SEGMENT_IOU,
-                SEGMENT_PAD,
-                SEGMENT_RETINA_MASKS,
-                SEGMENT_MAX_DET,
-                device=SEGMENT_DEVICE,
-                save_crops=True,
-            )
-            spines: List[SegmentedSpine] = []
-            for crop in crops:
-                crop_path = Path(crop.rectified_path)
-                if not crop_path.is_file():
-                    crop_path = Path(crop.masked_path)
-                record = self._store.add_library_crop(
-                    crop_path,
-                    capture_id=capture_id,
-                    spine_index=crop.index,
-                    confidence=crop.confidence,
-                )
-                spines.append(
-                    SegmentedSpine(
-                        library_id=record.id,
-                        index=int(crop.index),
-                        confidence=float(crop.confidence),
-                        area=int(crop.area),
-                        bbox_xyxy=tuple(int(value) for value in crop.bbox_xyxy),
-                        polygon_xy=tuple(
-                            (float(point[0]), float(point[1])) for point in crop.polygon_xy
-                        ),
-                    )
-                )
-            return SegmentResult(capture_id=capture_id, spines=tuple(spines))
-        finally:
-            self._schedule_idle_unload()
-
-    def _load_segment_model(self) -> Any:
-        with self._model_lock:
-            if self._segment_model is not None:
-                return self._segment_model
-            if not self._weights_path.is_file():
-                raise SegmentationUnavailableError(
-                    "书脊分割模型未安装，请联系维护人员部署 book_spine_inference_light（缺失权重：%s）"
-                    % self._weights_path
-                )
-            try:
-                import torch
-            except ImportError as error:
-                raise SegmentationUnavailableError(
-                    "书脊分割功能不可用：缺少 torch 依赖，请联系维护人员检查 BookArm Python 环境"
-                ) from error
-            torch.set_num_threads(self._torch_threads)
-            try:
-                torch.set_num_interop_threads(1)
-            except RuntimeError:
-                # Interop threads can only be configured once, before any
-                # parallel work starts; a reload after that point raises.
-                pass
-            try:
-                from ultralytics import YOLO
-            except ImportError as error:
-                raise SegmentationUnavailableError(
-                    "书脊分割功能不可用：缺少 ultralytics 依赖，请联系维护人员检查 BookArm Python 环境"
-                ) from error
-            model = YOLO(str(self._weights_path))
-            model.to("cpu")
-            self._segment_model = model
-            return self._segment_model
-
-    def _schedule_idle_unload(self) -> None:
-        """Restart the idle timer that drops the model from memory."""
-
-        if self._model_idle_unload_s <= 0:
-            return
-        with self._model_lock:
-            if self._idle_timer is not None:
-                self._idle_timer.cancel()
-            timer = threading.Timer(self._model_idle_unload_s, self._unload_idle_model)
-            timer.daemon = True
-            timer.start()
-            self._idle_timer = timer
-
-    def _unload_idle_model(self) -> None:
-        with self._model_lock:
-            self._idle_timer = None
-            if self._segment_model is None:
-                return
-            self._segment_model = None
-        gc.collect()
-
-    def shutdown(self) -> None:
-        """Cancel the idle-unload timer so it cannot fire during teardown."""
-
-        with self._model_lock:
-            if self._idle_timer is not None:
-                self._idle_timer.cancel()
-                self._idle_timer = None
-
-    def _load_infer_module(self) -> Any:
-        if self._infer_module is not None:
-            return self._infer_module
-        if not self._infer_path.is_file():
-            raise SegmentationUnavailableError(
-                "书脊分割模型未安装，请联系维护人员部署 book_spine_inference_light（缺失推理脚本：%s）"
-                % self._infer_path
-            )
-        spec = importlib.util.spec_from_file_location("_bookarm_studio_infer", str(self._infer_path))
-        if spec is None or spec.loader is None:
-            raise SegmentationUnavailableError(
-                "书脊分割推理模块无法加载，请联系维护人员检查 book_spine_inference_light：%s"
-                % self._infer_path
-            )
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        try:
-            spec.loader.exec_module(module)
-        except ImportError as error:
-            sys.modules.pop(spec.name, None)
-            raise SegmentationUnavailableError(
-                "书脊分割推理模块加载失败，请联系维护人员检查 book_spine_inference_light：%s"
-                % error
-            ) from error
-        self._infer_module = module
-        return module
-
 
 class _FakeGapCamera:
     """Feed the real DepthGapLocator one synthetic color+depth frame."""
@@ -1688,41 +1510,6 @@ class FakeStudioBackend(StudioBackend):
                 depth_gap_mm=depth_gap_mm,
             )
         return self._store.vision_debug_gap_meta()
-
-    def segment_capture(self, capture_id: str, *, conf: float, imgsz: int) -> SegmentResult:
-        image_path = self._store.capture_image_path(capture_id)
-        image = cv2.imread(str(image_path))
-        if image is None:
-            raise RuntimeError("studio capture is unreadable: %s" % image_path)
-        output_dir = self._store.segments_dir / capture_id
-        output_dir.mkdir(parents=True, exist_ok=True)
-        spines: List[SegmentedSpine] = []
-        for index, (x1, y1, x2, y2, _color) in enumerate(self.SPINE_BLOCKS, start=1):
-            crop_path = output_dir / ("%s_fake_spine_%03d.png" % (capture_id, index))
-            if not cv2.imwrite(str(crop_path), image[y1:y2, x1:x2]):
-                raise RuntimeError("failed to write fake spine crop: %s" % crop_path)
-            record = self._store.add_library_crop(
-                crop_path,
-                capture_id=capture_id,
-                spine_index=index,
-                confidence=0.99 - 0.01 * (index - 1),
-            )
-            spines.append(
-                SegmentedSpine(
-                    library_id=record.id,
-                    index=index,
-                    confidence=record.confidence,
-                    area=int((x2 - x1) * (y2 - y1)),
-                    bbox_xyxy=(x1, y1, x2, y2),
-                    polygon_xy=(
-                        (float(x1), float(y1)),
-                        (float(x2), float(y1)),
-                        (float(x2), float(y2)),
-                        (float(x1), float(y2)),
-                    ),
-                )
-            )
-        return SegmentResult(capture_id=capture_id, spines=tuple(spines))
 
     def _render_frame(self, frame_number: int) -> np.ndarray:
         image = np.full((self.IMAGE_HEIGHT, self.IMAGE_WIDTH, 3), (232, 226, 218), dtype=np.uint8)
