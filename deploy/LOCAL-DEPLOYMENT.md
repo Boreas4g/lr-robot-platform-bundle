@@ -1,5 +1,11 @@
 # 本机部署记录
 
+> **2026-10-20 增补**：当前主机没有 root/sudo、Docker 及本 bundle 的
+> `lr-*` systemd 单元，控制站改为用户态部署（PostgreSQL/Redis/Mosquitto
+> 解包运行、uvicorn + node 静态站点）。操作说明、端口与测试结果见
+> [deploy/local/README.md](local/README.md)。下文 2026-10-16 的
+> systemd/Docker 部署记录保留作为历史参考。
+
 2026-10-16：将本机控制站前端与 control-api 从 `/home/boreas/LR-Web`
 切换到 `/home/boreas/lr-robot-platform-bundle/LR-Web`。
 

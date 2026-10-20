@@ -51,6 +51,17 @@ lr-station-discovery.service ──> 局域网发现广播
 `~/project/lingzu_arm/`（bookarm 退役快照，落后 5 个提交）、`~/project/rod-motor-firmware/`（与 external 逐字节一致）、
 `LR-Web/lr-oneclick-deploy-20261008.tar.gz`（410M 旧部署归档，含凭据）。
 
+## 本机当前部署（2026-10-20）
+
+本机没有 root/sudo、Docker，也没有本 bundle 的 `lr-*` systemd 单元；控制站已按
+用户态方式运行：
+
+- 网页：<http://localhost:8000>（局域网 <http://192.168.3.53:8000>）
+- API 文档：<http://localhost:8080/docs>
+
+配置、端口、启停与测试命令见 [deploy/local/README.md](deploy/local/README.md)。
+机器人硬件未连接，BookArm 可选用 `--fake` 模拟联调。
+
 ## 恢复要点
 
 1. 依赖：Node.js ≥22、Python（conda env `lr-control-api`）、ROS 2 Jazzy、Docker（PG/Redis/MinIO/EMQX）。

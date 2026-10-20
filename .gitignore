@@ -1,2 +1,9 @@
 # Local deployment backups may contain private runtime configuration and data.
 /.local-deploy/
+
+# User-space local deployment (see deploy/local/README.md)
+/.local-stack/
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
