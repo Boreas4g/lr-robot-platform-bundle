@@ -60,6 +60,29 @@ pydantic `.env` 配置保持一致。
 本机重启后不会自动启动（没有 systemd 用户单元）；需要时手动执行
 `start-local.sh`。
 
+## 桌面一键启动
+
+桌面已放置可双击的启动器：
+
+```text
+~/Desktop/启动图书馆机器人.desktop
+  └─ Exec: deploy/local/desktop-start.sh
+       ├─ LR_BOOKARM_FAKE=true start-local.sh（全部服务）
+       ├─ 成功后系统通知并自动打开 http://localhost:8000
+       └─ 失败时弹窗提示，日志在 .local-stack/logs/desktop-start.log
+```
+
+启动器已 `chmod +x` 并设置 `metadata::trusted=true`（Ubuntu GNOME 无需再点
+“允许启动”）。冷启动约 3 秒；服务已在运行时重复点击只会重新打开网页。
+文件管理器或终端里也可直接运行：
+
+```bash
+bash deploy/local/desktop-start.sh
+```
+
+> 启动器固定带 `LR_BOOKARM_FAKE=true`，即无硬件演示模式。接真实机械臂时
+> 请改用终端命令并去掉该变量，同时恢复真实 BookArm socket。
+
 ## 配置要点
 
 `LR-Web/apps/control-api/.env` 与模板
