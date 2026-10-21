@@ -61,6 +61,24 @@ pydantic `.env` 配置保持一致。
 本机重启后不会自动启动（没有 systemd 用户单元）；需要时手动执行
 `start-local.sh`。
 
+## 前端「一键启动」
+
+生产版 `scripts/start-all.sh` 会操作 systemd/Docker；本机没有这些组件，直接点击
+总览页「一键启动」会显示 robot-runtime、mapping-agent、platform-web 失败。
+现已在 `LR-Web/apps/control-api/.env` 设置：
+
+```text
+LR_HOST_START_ALL_SCRIPT=.../deploy/local/start-all-local.sh
+```
+
+该适配脚本启动用户态控制站，并向页面返回：
+
+- `bookarm-conflict` / `platform-web` / `bookarm-service`：OK
+- `can0` / `robot-runtime` / `mapping-agent`：SKIPPED（车端硬件运行时需现场授权后单独启动）
+
+因此页面会显示启动完成，但明确列出被跳过的车端模块；这不代表 Nav2/机械臂运行时
+已启动。`重启全部` 仍使用生产版 `restart-all.sh`，本机暂未适配。
+
 ## 桌面一键启动
 
 桌面已放置可双击的启动器：

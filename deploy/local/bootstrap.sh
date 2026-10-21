@@ -149,6 +149,7 @@ LR_CRUISE_POINTS_FILE=$BUNDLE_ROOT/LR-Web/external/Library_robot/src/robot_decis
 LR_CRUISE_POINTS_ENABLED=false
 LR_VEHICLE_MAP_REGISTER_ENABLED=false
 LR_BOOKARM_SOCKET_PATH=$STACK_DIR/run/bookarm/bookarm.sock
+LR_HOST_START_ALL_SCRIPT=$BUNDLE_ROOT/deploy/local/start-all-local.sh
 EOF
   chmod 600 "$ENV_FILE"
 fi
