@@ -2,7 +2,8 @@
 
 2026-10-20 在 `boreas@boreas`（Ubuntu 24.04）上完成的控制站部署记录。
 本机没有 root/sudo、没有 Docker，也没有为本 bundle 安装的 `lr-*` systemd
-单元，因此采用**用户态**运行全部组件；机器人车端硬件未连接。
+单元，因此采用**用户态**运行全部组件。2026-10-21 已接入 IMU、前后雷达与
+底盘（串口只读通信/驱动测试通过）；机械臂仍未接入，BookArm 继续用 `--fake`。
 
 ## 部署内容
 
@@ -146,7 +147,36 @@ env LR_STORAGE_BACKEND=memory LR_DATABASE_URL= LR_REDIS_URL= LR_MQTT_URL= \
 WebSocket `robots.snapshot` / `robot.updated` / 电池每秒推送、重启后数据持久化；
 启动 fake BookArm 时还会验证控制站健康轮询与 `--fake` 服务连通。
 
-## 没有硬件时的行为
+## 硬件诊断（2026-10-21）
+
+新硬件已通过 USB HUB 接入，`99-robot-serial.rules` 已按实际序列号更新并安装：
+
+| 设备 | 别名 | 序列号 / USB 路径 | 协议 |
+| --- | --- | --- | --- |
+| 前雷达 | `/dev/laser_port` → `ttyACM1` | `5C98184123` | LSLIDAR N10_P，460800 |
+| 后雷达 | `/dev/laser_back` → `ttyACM0` | `5C98184650` | LSLIDAR N10_P，460800 |
+| 底盘 | `/dev/chassis_serial_port` → `ttyACM2` | `5B90176754` | DDSM115 RS485，115200 |
+| IMU | `/dev/imu_port` → `ttyUSB0` | CH340，USB 路径 `...-0:2.2` | WIT 0x55 帧，9600 |
+
+只读探针（不发送任何运动命令）：
+
+```bash
+python3 deploy/local/hardware-probe.py
+```
+
+2026-10-21 结果：
+
+- 前/后雷达：各约 **10 Hz** 扫描（`/scan_f`、`/scan_b`），原始包率约 328 包/s，
+  5 秒内 CRC 错误 0–1 个，测距约 0.14–5.8 m；
+- 底盘：DDSM115 **4/4 电机**返回有效反馈帧，模式 `0x02`，轮速 0；探针只发
+  `0x74` 反馈查询，未发转速命令；
+- IMU：串口和 `/imu/data_raw` 正常（约 10 Hz），加速度约 `(0, 0, +9.8) m/s²`，
+  **但 `0x52` 陀螺仪原始帧三轴恒为零**，`angular_velocity` 输出全 0。当前
+  `car_odometry` 依赖陀螺仪 z 轴，yaw 里程计暂不可用；需确认 IMU 型号/是否硬件故障；
+- 未做底盘运动测试。按车端安全规则，运动验收需要现场负责人明确授权、急停可用、
+  运动范围清场并完成定位/限速检查。
+
+## 硬件未连接时的行为（历史）
 
 - 不会启动 `lr-robot-runtime`、Nav2、雷达、机械臂、XT369 采集等车端进程；
 - 机器人列表使用 API 的演示种子数据（LR-01），遥测可通过 MQTT 注入并持久化；

@@ -1,10 +1,17 @@
 # Robot serial port aliases.
 #
 # ttyACM devices have unique USB serial numbers, so bind them by serial.
-# CH341 ttyUSB devices do not expose unique serial numbers here, so bind them
-# by physical USB path. Keep those devices plugged into the same USB ports.
+# The CH340 IMU does not expose a serial number, so bind it by physical USB
+# path. Keep that device plugged into the same USB hub port.
+#
+# Mapping updated 2026-10-21 for the replacement hardware. The front/rear
+# assignment was confirmed by unplugging the front lidar (ttyACM1 disappeared).
+#   laser_port (front) : 55d4 serial 5C98184123, hub port 2.3
+#   laser_back (rear)  : 55d4 serial 5C98184650, hub port 2.1
+#   chassis            : 55d3 serial 5B90176754, hub port 2.4
+#   imu_port           : 7523 CH340, hub port 2.2
 
-SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", ATTRS{serial}=="5B8E670052", MODE="0666", SYMLINK+="laser_back"
-SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", ATTRS{serial}=="5B8E671843", MODE="0666", SYMLINK+="laser_port"
-SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ATTRS{serial}=="5B90145622", MODE="0666", SYMLINK+="chassis_serial_port"
-SUBSYSTEM=="tty", ENV{ID_PATH}=="pci-0000:00:14.0-usb-0:6.4:1.0", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE="0666", SYMLINK+="imu_port"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", ATTRS{serial}=="5C98184123", MODE="0666", SYMLINK+="laser_port"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", ATTRS{serial}=="5C98184650", MODE="0666", SYMLINK+="laser_back"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ATTRS{serial}=="5B90176754", MODE="0666", SYMLINK+="chassis_serial_port"
+SUBSYSTEM=="tty", ENV{ID_PATH}=="pci-0000:00:14.0-usb-0:2.2:1.0", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE="0666", SYMLINK+="imu_port"

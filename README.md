@@ -60,7 +60,8 @@ lr-station-discovery.service ──> 局域网发现广播
 - API 文档：<http://localhost:8080/docs>
 
 配置、端口、启停与测试命令见 [deploy/local/README.md](deploy/local/README.md)。
-机器人硬件未连接，BookArm 可选用 `--fake` 模拟联调。
+2026-10-21 已接入 IMU、前后雷达和底盘并通过串口/ROS 只读测试；机械臂仍未接入，
+BookArm 继续用 `--fake` 模拟联调。
 
 ## 恢复要点
 
