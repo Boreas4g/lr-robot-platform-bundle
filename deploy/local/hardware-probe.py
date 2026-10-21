@@ -41,6 +41,8 @@ def probe_imu(port: str, baud: int, seconds: float) -> bool:
         return False
 
     frames = {0x51: 0, 0x52: 0, 0x53: 0}
+    gyro_max = [0.0, 0.0, 0.0]
+    gyro_nonzero = 0
     acc = gyro = angle = None
     buffer = bytearray()
     deadline = time.monotonic() + seconds
@@ -78,6 +80,10 @@ def probe_imu(port: str, baud: int, seconds: float) -> bool:
                 elif kind == 0x52:
                     frames[kind] += 1
                     gyro = [math.radians(value) for value in signed]
+                    for axis, value in enumerate(gyro):
+                        gyro_max[axis] = max(gyro_max[axis], abs(value))
+                    if any(abs(value) > 1e-9 for value in gyro):
+                        gyro_nonzero += 1
                 elif kind == 0x53:
                     frames[kind] += 1
                     angle = [math.radians(value) for value in signed]
@@ -94,6 +100,8 @@ def probe_imu(port: str, baud: int, seconds: float) -> bool:
         print(f"  accel  (m/s^2): {acc[0]:+.2f} {acc[1]:+.2f} {acc[2]:+.2f}")
     if gyro:
         print(f"  gyro   (deg/s): {math.degrees(gyro[0]):+.2f} {math.degrees(gyro[1]):+.2f} {math.degrees(gyro[2]):+.2f}")
+        print(f"  gyro max (deg/s): {math.degrees(gyro_max[0]):.3f} {math.degrees(gyro_max[1]):.3f} {math.degrees(gyro_max[2]):.3f}"
+              f"  nonzero_frames={gyro_nonzero}/{frames[0x52]}")
     if angle:
         print(f"  angle  (deg):   {math.degrees(angle[0]):+.2f} {math.degrees(angle[1]):+.2f} {math.degrees(angle[2]):+.2f}")
     if total == 0:
