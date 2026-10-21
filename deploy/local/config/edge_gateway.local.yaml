@@ -1,0 +1,69 @@
+# Local single-machine Edge Gateway configuration (no TLS, localhost MQTT).
+#
+# Used by deploy/local/start-vehicle-local.sh for the no-root development
+# station. It is NOT a production vehicle configuration: production uses the
+# per-robot mTLS package and /etc/lr-robot/edge-gateway.yaml.
+#
+# Map bounds below match the imported 302lab map:
+#   origin (-4.441, -1.751), 209x175 px, 0.040 m/px
+#   max_x = 3.919, max_y = 5.249
+
+edge_gateway_node:
+  ros__parameters:
+    robot_id: "LR-01"
+
+    mqtt_host: "127.0.0.1"
+    mqtt_port: 51883
+    mqtt_protocol_version: "3.1.1"
+    mqtt_tls_enabled: false
+    mqtt_ca_file: ""
+    mqtt_client_cert_file: ""
+    mqtt_client_key_file: ""
+    mqtt_username: ""
+    mqtt_password: ""
+
+    allowed_map_ids:
+      - "MAP-302LAB"
+    active_map_id: "MAP-302LAB"
+    map_registry_file: ""
+    map_state_file: "/home/boreas/lr-robot-platform-bundle/.local-stack/data/active_map.json"
+    map_load_service: "/map_server/load_map"
+    auto_localize_service: "/localization/auto_localize"
+    map_switch_topic: "/localization/map_switch"
+    map_min_x: -4.441
+    map_max_x: 3.919
+    map_min_y: -1.751
+    map_max_y: 5.249
+    max_abs_yaw: 6.284
+
+    command_queue_size: 10
+    navigate_action_name: "navigate_to_pose"
+    # Manual jog goes directly to the chassis; the UI requires an explicit
+    # operator confirmation before it sends the first jog.
+    manual_cmd_vel_topic: "/cmd_vel"
+    manual_command_timeout_seconds: 1.0
+    amcl_pose_topic: "/amcl_pose"
+    initial_pose_topic: "/initialpose"
+    localization_status_topic: "/localization/status"
+    localization_scan_mode_topic: "/localization/scan_mode"
+    chassis_status_topic: "/wheel_speed_source"
+    chassis_status_timeout_seconds: 2.5
+    imu_stale_timeout_seconds: 2.0
+    wheel_speed_topic: "/wheel_speeds"
+    wheel_speed_timeout_seconds: 1.0
+    base_stationary_speed_threshold_mps: 0.01
+
+    bookarm_backend: "takeout"
+    bookarm_api_url: "http://127.0.0.1:18080/api/v1"
+    bookarm_timeout_seconds: 3.0
+    bookarm_rod_device: "/dev/rodmotor"
+    bookarm_lift_device: "/dev/lift_port"
+    bookarm_takeout_socket: "/home/boreas/lr-robot-platform-bundle/.local-stack/run/bookarm/bookarm.sock"
+    bookarm_takeout_token: ""
+
+    book_shelf_fine_tune_enabled: false
+    hardware_profile: "LR-01-edulite-a3-v1"
+    telemetry_period_seconds: 0.5
+    pose_stale_timeout_seconds: 5.0
+    max_position_variance: 0.5
+    max_yaw_variance: 0.35

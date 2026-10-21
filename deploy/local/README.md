@@ -61,23 +61,57 @@ pydantic `.env` 配置保持一致。
 本机重启后不会自动启动（没有 systemd 用户单元）；需要时手动执行
 `start-local.sh`。
 
-## 前端「一键启动」
+## 车端本地栈与前端「一键启动」
 
-生产版 `scripts/start-all.sh` 会操作 systemd/Docker；本机没有这些组件，直接点击
-总览页「一键启动」会显示 robot-runtime、mapping-agent、platform-web 失败。
-现已在 `LR-Web/apps/control-api/.env` 设置：
+本机跑的是“控制站 + 车端驱动/Gateway/建图代理”同机用户态部署。生产版
+`scripts/start-all.sh` 依赖 systemd/Docker，因此 `.env` 将
+`LR_HOST_START_ALL_SCRIPT` 指向 [start-all-local.sh](start-all-local.sh)。
 
-```text
-LR_HOST_START_ALL_SCRIPT=.../deploy/local/start-all-local.sh
+点击总览页「一键启动」现在会：
+
+1. 启动/检查控制站（PostgreSQL、Redis、MQTT、control-api、网页、fake BookArm）；
+2. **派发**车端本地栈（异步，约 10–20 秒就绪）：
+   - IMU、DDSM115 底盘、轮式里程计；
+   - 前后 N10_P 雷达、静态雷达 TF、双雷达合并 `/scan`；
+   - 手动初始位姿桥（`map→odom`，用于点云叠图，**不是 AMCL**）；
+   - Edge Gateway（本机 MQTT、`/cmd_vel`）；
+   - 建图代理 `127.0.0.1:18090`。
+
+返回步骤中车端项为 `STARTED`（启动中），其余控制站项为 `OK`；
+`robot-runtime` 和 `arm-service` 仍为 `SKIPPED`（未安装 Nav2/AMCL，机械臂未接入）。
+启动本身不会发布运动命令；底盘只有在操作员于底盘调试页确认安全并按住按钮后才会动。
+
+车端栈日志在 `.local-stack/logs/vehicle/`，完整一键启动日志在
+`.local-stack/logs/start-all-local.log`。
+
+### 雷达点云与底盘遥控
+
+- 地图页打开「雷达点云」开关后，控制 API 会轮询建图代理的
+  `/mapping/loc-overlay`，约每 2 秒刷新。
+- 手动定位桥默认把机器人放在地图 `(0, 0, 0)`；请在地图页用
+  **「网页确认位置」** 选择机器人真实位置，点云和机器人标记会随之对齐。
+  这是本地手动定位，不进行激光匹配，不能替代 AMCL/导航。
+- 底盘调试页现在能收到实时 `chassisReady=true`。点「启用手动控制」会再次弹出
+  现场安全确认；确认后按住方向按钮/键盘才会向 Gateway 发布 `/cmd_vel`。
+  松开按钮、页面失焦或超时都会停车。**操作前必须确认急停可触达、周边清场。**
+
+```bash
+# 只启动车端栈（控制站已在运行时）
+bash deploy/local/start-vehicle-local.sh
+bash deploy/local/stop-vehicle-local.sh
+
+# 完整启停（网页一键启动/桌面启动器走同一套）
+bash deploy/local/start-all-local.sh
+bash deploy/local/stop-local.sh
 ```
 
-该适配脚本启动用户态控制站，并向页面返回：
+`start-vehicle-local.sh` 会清理被杀 ROS 进程遗留的 Fast DDS 共享内存段；
+否则 Python 节点彼此可见而 C++ 雷达/合并节点会静默消失。不要手工删除正在运行
+进程的 `/dev/shm/fastrtps*`。
 
-- `bookarm-conflict` / `platform-web` / `bookarm-service`：OK
-- `can0` / `robot-runtime` / `mapping-agent`：SKIPPED（车端硬件运行时需现场授权后单独启动）
-
-因此页面会显示启动完成，但明确列出被跳过的车端模块；这不代表 Nav2/机械臂运行时
-已启动。`重启全部` 仍使用生产版 `restart-all.sh`，本机暂未适配。
+> **安全边界**：`start-all-local.sh` 通过 `spawn-detached.py` 异步派发车端栈，
+> 并关闭继承的 API 管道，避免一键启动请求被后台进程挂住。车端栈启动不代表
+> 已经授权运动；底盘遥控和任何真实运动仍需现场确认。
 
 ## 桌面一键启动
 
@@ -86,21 +120,21 @@ LR_HOST_START_ALL_SCRIPT=.../deploy/local/start-all-local.sh
 ```text
 ~/Desktop/启动图书馆机器人.desktop
   └─ Exec: deploy/local/desktop-start.sh
-       ├─ LR_BOOKARM_FAKE=true start-local.sh（全部服务）
+       ├─ LR_BOOKARM_FAKE=true start-all-local.sh（控制站 + 车端本地栈）
        ├─ 成功后系统通知并自动打开 http://localhost:8000
        └─ 失败时弹窗提示，日志在 .local-stack/logs/desktop-start.log
 ```
 
-启动器已 `chmod +x` 并设置 `metadata::trusted=true`（Ubuntu GNOME 无需再点
-“允许启动”）。冷启动约 3 秒；服务已在运行时重复点击只会重新打开网页。
+启动器已 `chmod +x` 并设置 `metadata::trusted=true`。控制站约 3 秒可访问，
+车端雷达/Gateway 在后台继续启动约 10–20 秒；页面刷新后点「雷达点云」即可。
 文件管理器或终端里也可直接运行：
 
 ```bash
 bash deploy/local/desktop-start.sh
 ```
 
-> 启动器固定带 `LR_BOOKARM_FAKE=true`，即无硬件演示模式。接真实机械臂时
-> 请改用终端命令并去掉该变量，同时恢复真实 BookArm socket。
+> 启动器固定带 `LR_BOOKARM_FAKE=true`。接入真实机械臂时请改用终端命令并去掉
+> 该变量，同时恢复真实 BookArm socket；底盘/雷达/IMU 不受此变量影响。
 
 ## 配置要点
 
@@ -143,6 +177,9 @@ bash deploy/local/desktop-start.sh
 | ROS `robot_decision` | `PYTHONPATH=src/robot_decision:… pytest test` | **154 passed** |
 | ROS `car_ctrl` | `PYTHONPATH=src/car_ctrl:… pytest test` | **13 passed** |
 | 建图代理 | `…/Library_robot/scripts/test_mapping_agent.py` | **14 passed** |
+| 车端一键启动 | 总览页「一键启动」/ `start-all-local.sh` | HTTP 200 约 0.14 s；后台拉起 9 个节点 + 2 个静态 TF；`/mapping/loc-overlay` 返回 408–557 点；`chassisReady=true` |
+| 手动定位叠图 | 地图页「网页确认位置」/ `POST /localization/initial-pose` | 手动位姿 `(1,1.5,0.3)` 后点云 pose 同步变化；已复位 `(0,0,0)`；**非 AMCL** |
+| Gateway paho 2.x | `edge_gateway_node` MQTT 回调 | 修复 `ReasonCode` 不可 `int()` 导致的连接线程异常；MQTT 重连正常 |
 | ROS 构建 | `colcon build`（8 个包） | car_ctrl、robot_decision、arm_aux_devices、voice、explore_lite_msgs、dual_laser_merger、lslidar_msgs、lslidar_driver；`ros2 pkg executables` 可列出各节点 |
 
 后端测试会读取 `apps/control-api/.env`（部署用 PostgreSQL/本地站点标识），
@@ -195,10 +232,16 @@ python3 deploy/local/hardware-probe.py
   低速转动响应仍需在后续运动验收时确认，`car_odometry` 继续使用 IMU 角速度；
 - 未做底盘运动测试。按车端安全规则，运动验收需要现场负责人明确授权、急停可用、
   运动范围清场并完成定位/限速检查。
+- 2026-10-21 已做只读/零速链路验证：底盘 `chassisReady=true`，`manual_jog`
+  `(0,0,300ms)` 被控制 API 接受（202）并由 Gateway 消费；**没有发送任何非零
+  运动命令**。现场首次遥控请从最低速度开始，并保持急停可触达。
 
-## 硬件未连接时的行为（历史）
+## 初始无硬件阶段的行为（历史）
 
-- 不会启动 `lr-robot-runtime`、Nav2、雷达、机械臂、XT369 采集等车端进程；
+> 2026-10-21 已接入 IMU、前后雷达和底盘；当前一键启动会启动上述车端驱动，
+> 但 Nav2/AMCL、机械臂和 XT369 采集仍未启动。以下为最初无硬件阶段的行为记录。
+
+- 当时不会启动 `lr-robot-runtime`、Nav2、雷达、机械臂、XT369 采集等车端进程；
 - 机器人列表使用 API 的演示种子数据（LR-01），遥测可通过 MQTT 注入并持久化；
 - 未启动 fake BookArm 时 `/bookarm-api/*` 返回 500（Unix socket 不存在），前端按“机械臂服务不可达”降级；启动 fake 后接口与取还书流程可用，但健康状态来自模拟设备；
 - 电池接口返回 `offline`，来源为 XT369 USB；

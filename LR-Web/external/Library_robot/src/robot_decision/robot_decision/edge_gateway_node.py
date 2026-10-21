@@ -577,7 +577,16 @@ class EdgeGatewayNode(Node):
         return client
 
     def _on_mqtt_connect(self, client, _userdata, _flags, reason_code, _properties=None) -> None:
-        if int(reason_code) != 0:
+        # paho 2.x passes a ReasonCode object, which is not int()-able; paho 1.x
+        # passes an integer. Prefer the modern is_failure flag and fall back to
+        # the integer form for older callback APIs.
+        failed = getattr(reason_code, "is_failure", None)
+        if failed is None:
+            try:
+                failed = int(reason_code) != 0
+            except (TypeError, ValueError):
+                failed = False
+        if failed:
             self.get_logger().error(f"MQTT connection refused: {reason_code}")
             return
         result, _mid = client.subscribe(self.command_topic, qos=1)

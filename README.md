@@ -58,10 +58,14 @@ lr-station-discovery.service ──> 局域网发现广播
 
 - 网页：<http://localhost:8000>（局域网 <http://192.168.3.53:8000>）
 - API 文档：<http://localhost:8080/docs>
+- 车端本地栈：IMU、DDSM115 底盘、前后 N10_P 雷达、双雷达合并、里程计、
+  Edge Gateway、建图代理 `127.0.0.1:18090`；一键启动会异步拉起。
 
 配置、端口、启停与测试命令见 [deploy/local/README.md](deploy/local/README.md)。
-2026-10-21 已接入 IMU、前后雷达和底盘并通过串口/ROS 只读测试；机械臂仍未接入，
-BookArm 继续用 `--fake` 模拟联调。
+2026-10-21 已接入 IMU、前后雷达和底盘并通过串口/ROS 只读测试；网页一键启动
+现在会同时拉起车端驱动/Gateway/建图代理，地图页可看雷达点云，底盘调试页可
+在安全确认后手动遥控。Nav2/AMCL 尚未安装，自主导航仍不可用；机械臂未接入，
+BookArm 继续用 `--fake` 模拟联调。真实底盘运动尚未做现场验收。
 
 ## 恢复要点
 

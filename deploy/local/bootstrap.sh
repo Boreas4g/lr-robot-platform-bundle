@@ -70,7 +70,7 @@ fi
 # ---------------------------------------------------------------------------
 # 2. Optional ROS binary overlay used by robot_decision tests/build
 # ---------------------------------------------------------------------------
-for package in ros-jazzy-nav2-msgs ros-jazzy-diagnostic-updater; do
+for package in ros-jazzy-nav2-msgs ros-jazzy-diagnostic-updater ros-jazzy-geographic-msgs; do
   name="${package#ros-jazzy-}"
   name="${name//-/_}"
   if [ ! -d "$ROS_OVERLAY/opt/ros/jazzy/share/$name" ]; then
@@ -105,6 +105,12 @@ if [ ! -x "$VENV/bin/uvicorn" ]; then
     'numpy<2.4' opencv-python-headless 'httpx2>=2.0' pyserial python-multipart 'pin>=4'
 else
   log "Python environment already installed"
+fi
+
+# Edge Gateway runs under the system Python, not the virtualenv.
+if ! python3 -c 'import paho.mqtt.client' >/dev/null 2>&1; then
+  log "installing paho-mqtt for system Python (Edge Gateway)"
+  python3 -m pip install --user --break-system-packages --index-url "$PIP_INDEX" paho-mqtt
 fi
 
 # ---------------------------------------------------------------------------

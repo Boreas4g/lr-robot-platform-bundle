@@ -6,9 +6,9 @@
 # dashboard button would otherwise report robot-runtime/mapping-agent/Docker as
 # failed even though the control station is healthy.
 #
-# This adapter starts the local user-space stack, reports the control-station
-# components as OK, and explicitly SKIPS the on-robot ROS runtime, mapping agent
-# and CAN/arm services. Those still require a field-authorized vehicle runtime.
+# This adapter starts the local user-space stack and the local vehicle-side
+# driver/gateway/mapping stack. It does not start Nav2/AMCL or the arm; those
+# remain explicitly skipped. No motion command is published at startup.
 
 set -uo pipefail
 
@@ -23,7 +23,7 @@ step() { printf 'STEP %s %s %s\n' "$1" "$2" "$3"; }
 
 export LR_BOOKARM_FAKE="${LR_BOOKARM_FAKE:-true}"
 
-if bash "$SCRIPT_DIR/start-local.sh" >>"$LOG" 2>&1; then
+if timeout 90 bash "$SCRIPT_DIR/start-local.sh" >>"$LOG" 2>&1; then
   step bookarm-conflict OK "未检测到旧 BookArm TCP 服务"
 else
   step local-stack FAILED "用户态服务启动失败；日志：$LOG"
@@ -47,8 +47,32 @@ else
   step bookarm-service SKIPPED "BookArm fake 服务未启动；真实机械臂硬件未接入"
 fi
 
-step can0 SKIPPED "本机无 CAN 机械臂硬件；未配置 can0"
-step robot-runtime SKIPPED "本机用户态部署未启动车端 ROS 运行时；需现场授权后单独启动"
-step mapping-agent SKIPPED "本机用户态部署未启动建图代理；需现场授权后单独启动"
+# Start the vehicle stack detached. Its first start can take 10-20 seconds
+# (serial devices, DDS discovery, Gateway MQTT); waiting here would keep the
+# dashboard request open and is unnecessary. start-vehicle-local.sh uses a
+# lock and is idempotent, so repeated clicks do not create duplicates.
+if [ -x "$SCRIPT_DIR/start-vehicle-local.sh" ]; then
+  # Close all inherited fds in the child: the API reads our stdout pipe until
+  # EOF, and a detached grandchild inheriting it would keep that request open.
+  if /usr/bin/python3 "$SCRIPT_DIR/spawn-detached.py" "$LOG" \
+    bash "$SCRIPT_DIR/start-vehicle-local.sh"; then
+    step vehicle-stack STARTED "车端驱动/Gateway/建图代理启动中（约 10–20 秒）"
+    step vehicle-drivers STARTED "IMU、底盘、双雷达、里程计与雷达合并正在启动"
+    step manual-localization STARTED "手动初始位姿→map TF 正在启动（点云叠图用，非 AMCL）"
+    step edge-gateway STARTED "Edge Gateway 正在连接本机 MQTT（LR-01）"
+    step mapping-agent STARTED "建图代理 :18090 正在启动"
+  else
+    step vehicle-stack FAILED "无法派发车端启动进程"
+    exit 1
+  fi
+else
+  step vehicle-stack FAILED "缺少 start-vehicle-local.sh"
+  exit 1
+fi
 
+step can0 SKIPPED "本机无 CAN 机械臂硬件；未配置 can0"
+step robot-runtime SKIPPED "仅启动驱动/网关；Nav2/AMCL 导航未安装，未启动自主导航"
+step arm-service SKIPPED "真实机械臂硬件未接入；BookArm 保持 fake"
+
+echo "[start-all] returning $(date -Is)" >>"$LOG"
 exit 0

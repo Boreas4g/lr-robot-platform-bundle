@@ -26,7 +26,7 @@ notify() {
   fi
 }
 
-# A double click must not race two start-local runs against the same data dirs.
+# A double click must not race two full-stack starts against the same data dirs.
 exec 9>"$LOCK"
 if ! flock -n 9; then
   notify normal "图书馆机器人" "正在启动中，请稍候…"
@@ -36,7 +36,7 @@ fi
 {
   echo
   echo "===== $(date -Is) desktop start ====="
-  LR_BOOKARM_FAKE=true bash "$BUNDLE_ROOT/deploy/local/start-local.sh"
+  LR_BOOKARM_FAKE=true bash "$BUNDLE_ROOT/deploy/local/start-all-local.sh"
 } >>"$LOG" 2>&1
 status=$?
 

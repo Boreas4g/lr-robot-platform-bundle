@@ -11,6 +11,10 @@ PG_BIN="$STACK_ROOT/usr/lib/postgresql/16/bin"
 
 log() { printf '[stop] %s\n' "$*"; }
 
+if [ -x "$SCRIPT_DIR/stop-vehicle-local.sh" ]; then
+  bash "$SCRIPT_DIR/stop-vehicle-local.sh" || true
+fi
+
 stop_pidfile() {
   local name=$1
   local file="$STACK_RUN/$name.pid"
