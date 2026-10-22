@@ -4,7 +4,7 @@ set -eo pipefail
 # The MotorStudio WebUI remains loopback-only.  ROS calls it locally through
 # Edge Gateway; neither the browser nor the MQTT broker can reach CAN/serial.
 WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-BOOKARM_ROOT="${LR_BOOKARM_ROOT:-$WORKSPACE_ROOT/lingzu-bookarm-py}"
+BOOKARM_ROOT="${LR_BOOKARM_ROOT:-$WORKSPACE_ROOT/lingzu-bookarm-py/bookarm}"
 BOOKARM_ENV='/etc/lr-robot/bookarm.env'
 
 if [[ -r "$BOOKARM_ENV" ]]; then
@@ -12,11 +12,14 @@ if [[ -r "$BOOKARM_ENV" ]]; then
   source "$BOOKARM_ENV"
 fi
 
+PROJECT_ROOT="$(cd "$BOOKARM_ROOT/../../../.." && pwd)"
+export PYTHONPATH="$PROJECT_ROOT/drivers/aim_sdk:$BOOKARM_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+
 PYTHON_BIN="${LR_BOOKARM_PYTHON:-/home/boreas/miniconda3/bin/python3}"
 PORT="${LR_BOOKARM_PORT:-18080}"
 CAN_INTERFACE="${LR_BOOKARM_CAN_INTERFACE:-can0}"
 BACKEND="${LR_BOOKARM_BACKEND:-legacy}"
-ROBOT_WORKSPACE="${LR_ROBOT_WORKSPACE:-/home/boreas/LR/Library_robot}"
+ROBOT_WORKSPACE="${LR_ROBOT_WORKSPACE:-$WORKSPACE_ROOT/Library_robot}"
 
 [[ -d "$BOOKARM_ROOT" ]] || {
   echo "找不到机械臂项目：$BOOKARM_ROOT" >&2

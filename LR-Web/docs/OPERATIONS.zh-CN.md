@@ -54,7 +54,7 @@ Edge Gateway -- 本机 ROS 2 --> Nav2、AMCL、IMU、雷达、底盘
 | 控制站 DNS 名称 | `control-station.example` | 推荐使用固定 DNS 名称；所有机器人和桌面端都必须能解析它 |
 | 控制站局域网 IP | `192.168.10.10` | 若操作员或机器人会用 IP 访问，签发证书时必须一并填写 |
 | HTTPS 地址 | `https://control-station.example` | 非 443 端口时写完整端口，例如 `https://control-station.example:8443` |
-| 控制站项目目录 | `/home/boreas/project/LR/LR-Web` | 本手册以此目录为例 |
+| 控制站项目目录 | `/home/boreas/lr-robot-platform-bundle/LR-Web` | 本手册以此目录为例 |
 | 机器人工作空间 | `/home/boreas/Library_robot` | 每台机器人车载电脑均应有该工作空间 |
 | 机器人 ID | `LR-01` | 必须匹配 `LR-` 加字母、数字、下划线或连字符，例如 `LR-01`、`LR-A02` |
 | 机器人显示名称 | `智巡一号` | 仅用于网页显示，不能含逗号（CSV 限制） |
@@ -109,7 +109,7 @@ LR-02,智巡二号
 ### 3.2 创建控制站环境文件
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 sudo install -d -o root -g root -m 0750 /etc/lr-platform
 sudo cp infra/control-station.env.example /etc/lr-platform/platform.env
 sudo chown root:root /etc/lr-platform/platform.env
@@ -154,7 +154,7 @@ sudo cat /root/lr-platform-maintenance/initial-secrets.txt
 以下示例把控制站 DNS 设为 `control-station.example`，IP 设为 `192.168.10.10`。请替换为参数表中的真实值。
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 
 # 只在该现场第一次执行。已经存在时脚本会拒绝覆盖。
 sudo ./scripts/manage-fleet-pki.sh init-ca
@@ -226,7 +226,7 @@ rm -f /tmp/LR-01-points.yaml
 交付时不要让普通用户运行 Docker、填写地址或维护服务。完成前面的证书导出与环境文件配置后，以维护人员身份执行一次一体机安装。该脚本会验证网页证书 SAN、写入唯一设备 ID 和唯一 HTTPS 地址、安装平台开机自启，并启用仅在同一局域网有效的发现广播：
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 sudo ./scripts/install-control-station-appliance.sh \
   --station-url https://control-station.example \
   --station-name '图书馆机器人控制站'
@@ -245,7 +245,7 @@ sudo ./scripts/install-control-station-appliance.sh \
 如只需要传统服务开机自启、暂时不启用一体机发现，也可使用原命令：
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 sudo ./scripts/install-platform-autostart.sh
 sudo systemctl status lr-platform.service --no-pager
 ```
@@ -264,7 +264,7 @@ curl --fail --show-error --cacert /etc/lr-platform/client-ca.crt \
 如复用了已有 EMQX 数据卷，或不确定首次启动是否已导入 `emqx-users.csv`，执行一次账号同步，然后重启平台：
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 sudo ./scripts/manage-fleet-pki.sh sync-emqx all
 sudo systemctl restart lr-platform.service
 ```
@@ -285,7 +285,7 @@ sudo bash -c '
   . /etc/lr-platform/platform.env
   . /etc/lr-platform/platform-pki.env
   set +a
-  cd /home/boreas/project/LR/LR-Web
+  cd /home/boreas/lr-robot-platform-bundle/LR-Web
   docker compose -f infra/docker-compose/docker-compose.yml -f infra/docker-compose.production.yml ps
   docker compose -f infra/docker-compose/docker-compose.yml -f infra/docker-compose.production.yml logs --tail=100
 '
@@ -375,7 +375,7 @@ unset ADMIN_PASSWORD LOGIN_JSON TOKEN
 ### 5.1 在控制站导出该车交付包
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 sudo ./scripts/manage-fleet-pki.sh export-robot LR-01
 sudo find /var/lib/lr-platform/pki/exports/robots/LR-01 -maxdepth 2 -type f -printf '%m %p\n'
 ```
@@ -539,7 +539,7 @@ sudo rm -rf /etc/lr-robot/staging/LR-01
 1. 在 `/root/fleet/robots.csv` 增加一行，或单独签发：
 
    ```bash
-   cd /home/boreas/project/LR/LR-Web
+   cd /home/boreas/lr-robot-platform-bundle/LR-Web
    sudo ./scripts/manage-fleet-pki.sh issue-robot LR-03 智巡三号
    sudo ./scripts/manage-fleet-pki.sh export-robot LR-03
    ```
@@ -726,7 +726,7 @@ ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST ros2 topic echo /amcl_pose --once
 在维护窗口、控制站执行：
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 sudo ./scripts/manage-fleet-pki.sh verify
 sudo ./scripts/update-platform.sh
 sudo systemctl status lr-platform.service --no-pager
@@ -740,7 +740,7 @@ sudo systemctl status lr-platform.service --no-pager
 重复第 5 节，并在控制站增加账号后同步 Broker：
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 sudo ./scripts/manage-fleet-pki.sh issue-robot LR-03 智巡三号
 sudo ./scripts/manage-fleet-pki.sh export-robot LR-03
 sudo ./scripts/manage-fleet-pki.sh sync-emqx LR-03
@@ -753,7 +753,7 @@ sudo ./scripts/manage-fleet-pki.sh sync-emqx LR-03
 适用于机器人私钥、密码或交付介质可能泄露。安排维护窗口，并严格按顺序执行：
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 
 # 1. 生成新凭据；旧凭据会归档到 PKI archive 目录。
 sudo ./scripts/manage-fleet-pki.sh rotate-robot LR-01

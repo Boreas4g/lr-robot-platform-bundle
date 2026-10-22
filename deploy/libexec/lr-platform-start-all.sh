@@ -33,6 +33,33 @@ wait_http() {
   return 1
 }
 
+vehicle_alignment_ready() {
+  local status_json
+  status_json="$(curl -fsS --max-time 2 http://127.0.0.1:18091/status 2>/dev/null)" || return 1
+  /usr/bin/python3 -c '
+import json
+import sys
+
+try:
+    status = json.load(sys.stdin)
+except (TypeError, ValueError):
+    raise SystemExit(1)
+raise SystemExit(
+    0 if isinstance(status, dict) and status.get("ok") is True and
+    status.get("odom_available") is True else 1
+)
+' <<<"$status_json"
+}
+
+wait_vehicle_alignment() {
+  local tries="${1:-120}"
+  for _ in $(seq 1 "$tries"); do
+    vehicle_alignment_ready && return 0
+    sleep 1
+  done
+  return 1
+}
+
 bookarm_ready() {
   local socket_path="${LR_BOOKARM_SOCKET_PATH:-/run/lr-bookarm/bookarm.sock}"
   # 受管 BookArm 服务配置了 --token 后所有接口（含 /health）都强制鉴权，
@@ -134,14 +161,32 @@ else
   failed=1
 fi
 
-# ---------- Robot runtime ----------
-if systemctl is-active --quiet lr-robot-runtime.service; then
-  step robot-runtime OK "导航栈运行中"
-elif sudo -n systemctl start lr-robot-runtime.service && sleep 3 && \
-     systemctl is-active --quiet lr-robot-runtime.service; then
-  step robot-runtime STARTED "导航栈已启动"
+# ---------- USB battery collector ----------
+if systemctl is-active --quiet lr-xt369-usb.service; then
+  step battery-collector OK "XT369 电量采集进程运行中（无设备时会持续重连）"
+elif sudo -n systemctl start lr-xt369-usb.service && \
+     systemctl is-active --quiet lr-xt369-usb.service; then
+  step battery-collector STARTED "XT369 电量采集进程已启动"
 else
-  step robot-runtime FAILED "lr-robot-runtime.service 启动失败，查看 journalctl -u lr-robot-runtime"
+  step battery-collector FAILED "XT369 电量采集服务启动失败；查看 journalctl -u lr-xt369-usb"
+  failed=1
+fi
+
+# ---------- Robot runtime ----------
+if vehicle_alignment_ready; then
+  step robot-runtime OK "车辆定距服务与里程计在线 (:18091)"
+elif systemctl is-active --quiet lr-robot-runtime.service; then
+  if wait_vehicle_alignment 120; then
+    step robot-runtime OK "车辆定距服务与里程计已就绪 (:18091)"
+  else
+    step robot-runtime FAILED "lr-robot-runtime.service 运行中，但 :18091/status 或 /odom 未就绪；查看 journalctl -u lr-robot-runtime"
+    failed=1
+  fi
+elif sudo -n systemctl start lr-robot-runtime.service && \
+     wait_vehicle_alignment 120; then
+  step robot-runtime STARTED "车辆定距服务与里程计已启动并就绪 (:18091)"
+else
+  step robot-runtime FAILED "lr-robot-runtime.service 启动失败或 :18091/status、/odom 未就绪；查看 journalctl -u lr-robot-runtime"
   failed=1
 fi
 

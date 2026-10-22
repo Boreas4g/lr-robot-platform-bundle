@@ -6,5 +6,5 @@ After=network-online.target
 [Service]
 Type=oneshot
 User=root
-WorkingDirectory=/home/boreas/LR/Library_robot
-ExecStart=/home/boreas/LR/Library_robot/scripts/sync-robot-maps.py --config /etc/lr-robot/map-sync.yaml
+WorkingDirectory=/home/boreas/lr-robot-platform-bundle/LR-Web/external/Library_robot
+ExecStart=/home/boreas/lr-robot-platform-bundle/LR-Web/external/Library_robot/scripts/sync-robot-maps.py --config /etc/lr-robot/map-sync.yaml

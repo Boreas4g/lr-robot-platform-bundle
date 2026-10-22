@@ -49,7 +49,7 @@ Edge Gateway -- 本机 ROS 2 --> Nav2、AMCL、IMU、雷达、底盘
 以下步骤只由部署人员在控制站执行。生产配置使用 TLS 网页和 mTLS MQTT；绝不能使用仓库中的示例密码或证书。
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 sudo install -d -o root -g root -m 0750 /etc/lr-platform
 sudo cp infra/control-station.env.example /etc/lr-platform/platform.env
 sudo chown root:root /etc/lr-platform/platform.env
@@ -118,14 +118,14 @@ systemctl status lr-robot-runtime.service
 平台日志：
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 docker compose -f infra/docker-compose/docker-compose.yml logs --tail=100
 ```
 
 需要部署新版本时，由部署人员执行：
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 sudo ./scripts/update-platform.sh
 ```
 

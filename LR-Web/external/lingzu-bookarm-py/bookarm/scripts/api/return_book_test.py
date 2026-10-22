@@ -81,7 +81,7 @@ from typing import Any, Optional, Sequence, TypeVar
 
 BOOKARM_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = BOOKARM_ROOT / "src"
-AIM_SDK_SOURCE_ROOT = BOOKARM_ROOT.parent.parent / "aim_sdk"
+AIM_SDK_SOURCE_ROOT = BOOKARM_ROOT.parents[3] / "drivers" / "aim_sdk"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 if str(AIM_SDK_SOURCE_ROOT) not in sys.path:

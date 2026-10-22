@@ -41,6 +41,11 @@ class BookTarget:
     polygon_uv: Optional[Tuple[Tuple[float, float], ...]] = None
     frame_width_px: Optional[int] = None
     frame_height_px: Optional[int] = None
+    # Base-frame displacement per horizontal image pixel at this target's depth.
+    # D435 localization fills this from the aligned depth/intrinsics and the
+    # live camera extrinsic so IK can probe nearby grasp locations without a
+    # second capture or an assumed camera orientation.
+    horizontal_pixel_to_base_m: Optional[Tuple[float, float, float]] = None
 
 
 @dataclass(frozen=True)

@@ -24,6 +24,14 @@ if [[ ! -e /etc/lr-bookarm/bookarm.env ]]; then
   install -o root -g root -m 0640 /dev/null /etc/lr-bookarm/bookarm.env
 fi
 
+# Slot edits are persisted with an atomic temp-file + rename in this
+# directory, so the service account needs directory write permission as well
+# as read access to the existing calibration files.
+CALIBRATION_DIR=/etc/lr-bookarm/config/calibration
+install -d "$CALIBRATION_DIR"
+chown root:"$RUN_AS_USER" "$CALIBRATION_DIR"
+chmod 2770 "$CALIBRATION_DIR"
+
 cat >"$CAN_SERVICE_PATH" <<EOF
 [Unit]
 Description=BookArm CAN interface (can0 @ 1Mbps)
@@ -64,7 +72,7 @@ EnvironmentFile=-/etc/lr-bookarm/bookarm.env
 RuntimeDirectory=lr-bookarm
 RuntimeDirectoryMode=0755
 ExecStartPre=/usr/bin/bash -c '! /usr/bin/systemctl is-active --quiet lr-bookarm-runtime.service'
-ExecStart=$BOOKARM_ROOT/scripts/start-takeout-service.sh
+ExecStart=$BOOKARM_ROOT/scripts/start-takeout-service.sh --slots-path /etc/lr-bookarm/config/calibration/book_stand_slots.json --pickup-slots-path /etc/lr-bookarm/config/calibration/book_stand_pickup_slots.json
 Restart=on-failure
 RestartSec=3
 # The task runner still waits for its bounded device operation to finish

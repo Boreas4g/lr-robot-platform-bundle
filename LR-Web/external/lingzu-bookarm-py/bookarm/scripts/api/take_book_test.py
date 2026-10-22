@@ -93,7 +93,7 @@ from typing import Any, Optional, Sequence, TypeVar
 
 BOOKARM_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = BOOKARM_ROOT / "src"
-Aim_SDK_SOURCE_ROOT = BOOKARM_ROOT.parent.parent / "aim_sdk"
+Aim_SDK_SOURCE_ROOT = BOOKARM_ROOT.parents[3] / "drivers" / "aim_sdk"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 if str(Aim_SDK_SOURCE_ROOT) not in sys.path:
@@ -401,6 +401,7 @@ def report_book_grasp_step(step_name: str, event: str, error: Optional[str] = No
 def stop_stage_uses_arm(stage: TakeBookStage) -> bool:
     return stage in {
         TakeBookStage.ARM_DEBUG_POSE,
+        TakeBookStage.POST_VISION_ALIGN,
         TakeBookStage.BOOK_GRASP,
         TakeBookStage.BOOK_STAND_PLACE,
         TakeBookStage.ARM_STANDBY,

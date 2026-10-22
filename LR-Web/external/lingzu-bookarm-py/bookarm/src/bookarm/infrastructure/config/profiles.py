@@ -206,14 +206,13 @@ def _validate_post_vision_fields(values: Mapping[str, Any]) -> None:
     speed = float(values.get("align_pulse_speed_mps", 0.03))
     if not math.isfinite(speed) or not 0.005 <= speed <= 0.08:
         raise ValueError("align_pulse_speed_mps must be within 0.005..0.08 m/s")
-    step_cm = float(values.get("align_step_cm", 0.6))
-    if not math.isfinite(step_cm) or not 0.1 <= step_cm <= 5.0:
-        raise ValueError("align_step_cm must be within 0.1..5.0 cm")
-    gain = float(values.get("align_px_to_mm", 0.5))
-    if not math.isfinite(gain) or not 0.05 <= gain <= 10.0:
-        raise ValueError("align_px_to_mm must be within 0.05..10.0")
+    step_cm = float(values.get("align_step_cm", 20.0))
+    if not math.isfinite(step_cm) or not 0.1 <= step_cm <= 20.0:
+        raise ValueError("align_step_cm must be within 0.1..20.0 cm")
+    # align_px_to_mm is a legacy profile field; live D435 extrinsics now supply
+    # the pixel-to-base projection used for the distance command.
     pulse_min = int(values.get("align_pulse_min_ms", 100))
-    pulse_max = int(values.get("align_pulse_max_ms", 400))
+    pulse_max = int(values.get("align_pulse_max_ms", 500))
     if not 20 <= pulse_min <= pulse_max <= 500:
         raise ValueError("align_pulse_min/max_ms must satisfy 20<=min<=max<=500")
     if int(values.get("align_settle_ms", 600)) < 0:

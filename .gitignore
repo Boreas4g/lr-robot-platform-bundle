@@ -5,5 +5,6 @@
 /.local-stack/
 __pycache__/
 *.pyc
+*.py[cod]
 .venv/
 *.egg-info/

@@ -709,7 +709,7 @@ class MidReturnLoaderTests(unittest.TestCase):
     def test_loader_validates_align_step_cm(self):
         with tempfile.TemporaryDirectory() as directory:
             bad = Path(directory) / "bad.json"
-            bad.write_text(json.dumps({"align_step_cm": 8.0}), encoding="utf-8")
+            bad.write_text(json.dumps({"align_step_cm": 21.0}), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "align_step_cm"):
                 load_mid_return_motion_plan(bad)
 

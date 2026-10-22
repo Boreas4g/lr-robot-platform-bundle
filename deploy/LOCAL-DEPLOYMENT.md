@@ -9,6 +9,9 @@
 2026-10-16：将本机控制站前端与 control-api 从 `/home/boreas/LR-Web`
 切换到 `/home/boreas/lr-robot-platform-bundle/LR-Web`。
 
+2026-10-21：统一部署工作区到当前项目目录。前端、control-api、
+ROS 2、BookArm、书脊识别模型、systemd 单元及启动脚本都从该项目读取。
+
 ## 访问与服务
 
 - 本机网页：<http://localhost:8000>
@@ -17,12 +20,19 @@
 - 健康检查：<http://localhost:8000/health>
 - 沿用现有免登录操作员模式。
 
-`lr-web-static.service` 和 `lr-control-api.service` 继续由 systemd 管理，
-保留开机启动及失败重启设置。新增的路径覆盖文件为：
+所有 `lr-*` 服务继续由 systemd 管理，保留原有开机启动及失败重启设置。
+控制站的本地覆盖文件为：
 
 ```text
 /etc/systemd/system/lr-web-static.service.d/90-local-bundle.conf
 /etc/systemd/system/lr-control-api.service.d/90-local-bundle.conf
+```
+
+本地调试前端 `http://localhost:8001` 由 `lr-web-dev.service` 管理并开机自动启动；systemd 网络过滤只允许它与本机回环地址通信。生产静态前端仍由 `lr-web-static.service` 提供 `:8000`。查看调试前端状态和日志：
+
+```bash
+systemctl status lr-web-dev.service --no-pager
+journalctl -u lr-web-dev.service -n 100 --no-pager
 ```
 
 前端使用当前目录的 `dist/` 和 `scripts/serve-static.cjs`，API 使用当前目录的
@@ -36,16 +46,17 @@
 原有配置。健康检查显示 PostgreSQL、MQTT connected；Redis 会话缓存仍使用
 原有 memory 模式。
 
-`LR-Web/apps/control-api/data` 链接到
-`/home/boreas/LR-Web/apps/control-api/data`，继续使用现有地图和业务文件。
-**旧目录仍承载这些数据和车端运行环境，请保留。**
+现有地图、业务文件已迁入 `LR-Web/apps/control-api/data/`；BookArm 任务历史和书脊
+识别模型也已迁入当前项目对应目录。旧工作区保留为回滚副本，确认新路径运行稳定前不要删除。
 
-本次切换范围为控制站前端与 API。ROS 导航、机械臂、建图代理、Docker
-基础设施、平台启动及发现服务继续使用原有部署。
-API 服务通过 `LR_ROBOT_ROOT` 指向实际运行的 ROS 工作区
-`/home/boreas/LR-Web/external/Library_robot`。
+ROS 导航、机械臂、建图代理、地图注册、XT369 电池服务、平台启动及发现服务的
+systemd 配置均指向当前项目。API 服务通过 `LR_ROBOT_ROOT` 指向 ROS 工作区
+`/home/boreas/lr-robot-platform-bundle/LR-Web/external/Library_robot`。
 地图注册脚本通过 `LR_REGISTER_ROBOT_MAP_SCRIPT` 指向本机 sudoers 已授权的
-`/home/boreas/LR/Library_robot/scripts/register-robot-map.sh`。
+`/home/boreas/lr-robot-platform-bundle/LR-Web/external/Library_robot/scripts/register-robot-map.sh`。
+
+配置已写入，但本次没有重启导航、建图代理或机械臂服务，因此已运行的进程仍从旧工作区
+执行。现场负责人确认急停、清场、定位、限速和监护条件后，再安排服务切换和在线验收。
 
 ## 更新与查看日志
 

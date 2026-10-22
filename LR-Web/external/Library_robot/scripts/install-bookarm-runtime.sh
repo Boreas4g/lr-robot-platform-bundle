@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE_ROOT="$(cd "$ROOT_DIR/.." && pwd)"
-BOOKARM_ROOT="${LR_BOOKARM_ROOT:-$WORKSPACE_ROOT/lingzu-bookarm-py}"
+BOOKARM_ROOT="${LR_BOOKARM_ROOT:-$WORKSPACE_ROOT/lingzu-bookarm-py/bookarm}"
 SERVICE_FILE='/etc/systemd/system/lr-bookarm-runtime.service'
 ENV_DIR='/etc/lr-robot'
 ENV_FILE="$ENV_DIR/bookarm.env"

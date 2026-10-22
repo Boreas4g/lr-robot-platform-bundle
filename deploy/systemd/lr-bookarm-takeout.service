@@ -12,13 +12,14 @@ After=lr-bookarm-can.service
 [Service]
 Type=simple
 User=boreas
-WorkingDirectory=/home/boreas/project/LR/LR-Web/external/lingzu-bookarm-py/bookarm
+WorkingDirectory=/home/boreas/lr-robot-platform-bundle/LR-Web/external/lingzu-bookarm-py/bookarm
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/boreas/lr-robot-platform-bundle/drivers/aim_sdk:/home/boreas/lr-robot-platform-bundle/LR-Web/external/lingzu-bookarm-py/bookarm/src
 EnvironmentFile=-/etc/lr-bookarm/bookarm.env
 RuntimeDirectory=lr-bookarm
 RuntimeDirectoryMode=0755
 ExecStartPre=/usr/bin/bash -c '! /usr/bin/systemctl is-active --quiet lr-bookarm-runtime.service'
-ExecStart=/home/boreas/project/LR/LR-Web/external/lingzu-bookarm-py/bookarm/scripts/start-takeout-service.sh
+ExecStart=/home/boreas/lr-robot-platform-bundle/LR-Web/external/lingzu-bookarm-py/bookarm/scripts/start-takeout-service.sh --slots-path /etc/lr-bookarm/config/calibration/book_stand_slots.json --pickup-slots-path /etc/lr-bookarm/config/calibration/book_stand_pickup_slots.json
 Restart=on-failure
 RestartSec=3
 # A task runner waits for its bounded device operation to finish rather than

@@ -890,11 +890,17 @@ class RealStudioBackend(StudioBackend):
     # ---- 识别后校验调试（书脊倾斜 / 车辆居中对齐）----
 
     def vision_check_spine(self, library_id: str) -> Dict[str, Any]:
-        """拍照 + SIFT 匹配 + 倾斜/居中几何计算（不动车），供调试页检查。"""
+        """拍照 + SIFT 匹配 + 倾斜和 IK 舒适可达区计算（不动车）。"""
 
-        from bookarm.application.post_vision import center_x_ratio, compute_spine_tilt_deg
+        from bookarm.application.post_vision import (
+            _center_tolerance_ratio,
+            calculate_comfortable_center_band,
+            center_x_ratio,
+            compute_spine_tilt_deg,
+        )
 
         template_path = self._store.library_image_path(library_id)
+        plan = self._plan_getter() if self._plan_getter is not None else None
         with self._hold_busy():
             try:
                 target = self._camera.locate_book(SpineTemplate(template_path))
@@ -902,29 +908,71 @@ class RealStudioBackend(StudioBackend):
                 if "not detected" in str(error):
                     return {"matched": False, "detail": str(error)}
                 raise
-        plan = self._plan_getter() if self._plan_getter is not None else None
-        band = float(getattr(plan, "align_center_band_ratio", 0.40))
-        tilt_max = float(getattr(plan, "spine_tilt_max_deg", 60.0))
-        tilt = compute_spine_tilt_deg(target.polygon_uv)
-        ratio = center_x_ratio(target)
-        lo, hi = 0.5 - band / 2.0, 0.5 + band / 2.0
-        return {
-            "matched": True,
-            "tilt_deg": None if tilt is None else round(tilt, 2),
-            "tilt_max_deg": tilt_max,
-            "tilt_ok": (tilt is None) or (tilt <= tilt_max + 1e-6),
-            "center_x_ratio": None if ratio is None else round(ratio, 4),
-            "center_band": [round(lo, 3), round(hi, 3)],
-            "in_band": None if ratio is None else lo <= ratio <= hi,
-            "polygon_uv": [list(point) for point in (target.polygon_uv or ())],
-            "frame_width_px": target.frame_width_px,
-            "frame_height_px": target.frame_height_px,
-            "capture_id": target.capture_id,
-            "confidence": target.confidence,
-        }
+            tilt_max = float(getattr(plan, "spine_tilt_max_deg", 60.0))
+            tilt = compute_spine_tilt_deg(target.polygon_uv)
+            ratio = center_x_ratio(target)
+            reachable_band: Optional[Tuple[float, float]] = None
+            reachability: Dict[str, Any] = {
+                "checked": False,
+                "detail": "机械臂 IK 服务未接线，无法计算舒适可达区",
+            }
+            if self._arm is not None and plan is not None:
+                reachable_band, reachability = calculate_comfortable_center_band(
+                    target, plan, self._arm
+                )
+            center_target = (
+                None if reachable_band is None else (reachable_band[0] + reachable_band[1]) / 2.0
+            )
+            center_error = (
+                None if ratio is None or center_target is None else ratio - center_target
+            )
+            center_tolerance = (
+                None if reachable_band is None else _center_tolerance_ratio(reachable_band)
+            )
+            return {
+                "matched": True,
+                "tilt_deg": None if tilt is None else round(tilt, 2),
+                "tilt_max_deg": tilt_max,
+                "tilt_ok": (tilt is None) or (tilt <= tilt_max + 1e-6),
+                "center_x_ratio": None if ratio is None else round(ratio, 4),
+                "center_band": (
+                    None
+                    if reachable_band is None
+                    else [round(reachable_band[0], 3), round(reachable_band[1], 3)]
+                ),
+                "in_band": (
+                    None
+                    if ratio is None or reachable_band is None
+                    else reachable_band[0] <= ratio <= reachable_band[1]
+                ),
+                "center_x_target_ratio": (
+                    None if center_target is None else round(center_target, 4)
+                ),
+                "center_x_error_ratio": (
+                    None if center_error is None else round(center_error, 4)
+                ),
+                "center_tolerance_ratio": (
+                    None if center_tolerance is None else round(center_tolerance, 4)
+                ),
+                "centered_at_band_midpoint": (
+                    None
+                    if center_error is None or center_tolerance is None
+                    else abs(center_error) <= center_tolerance
+                ),
+                "reachability_checked": bool(reachability.get("checked", False)),
+                "reachability_detail": reachability.get("detail"),
+                "reachability_margin_rad": reachability.get("joint_comfort_margin_rad"),
+                "reachability_samples": reachability.get("sample_count"),
+                "reachable_samples": reachability.get("reachable_sample_count"),
+                "polygon_uv": [list(point) for point in (target.polygon_uv or ())],
+                "frame_width_px": target.frame_width_px,
+                "frame_height_px": target.frame_height_px,
+                "capture_id": target.capture_id,
+                "confidence": target.confidence,
+            }
 
     def vision_align_run(self, library_id: str) -> Dict[str, Any]:
-        """倾斜判定 + 车辆居中脉冲对齐的完整实测（车辆会缓速移动！）。"""
+        """倾斜判定 + 车辆定距居中对齐的完整实测（车辆会移动！）。"""
 
         from bookarm.application.post_vision import (
             align_vehicle_to_center,
@@ -934,6 +982,8 @@ class RealStudioBackend(StudioBackend):
 
         if self._vehicle is None:
             raise ArmUnavailableError("车辆对齐服务未接线到本服务实例")
+        if self._arm is None:
+            raise ArmUnavailableError("机械臂 IK 服务未接线，不能计算舒适抓取区")
         template_path = self._store.library_image_path(library_id)
         if self._plan_getter is None:
             raise RuntimeError("plan_getter 未配置，无法读取当前作业阈值")
@@ -947,7 +997,12 @@ class RealStudioBackend(StudioBackend):
                 raise
             tilt = check_spine_tilt(target, plan)
             final, details = align_vehicle_to_center(
-                self._camera, SpineTemplate(template_path), target, self._vehicle, plan
+                self._camera,
+                SpineTemplate(template_path),
+                target,
+                self._vehicle,
+                plan,
+                arm=self._arm,
             )
         ratio = center_x_ratio(final)
         return {
@@ -960,7 +1015,7 @@ class RealStudioBackend(StudioBackend):
         }
 
     def vehicle_align_status(self) -> Dict[str, Any]:
-        """车端缓速脉冲服务状态透传。"""
+        """车端定距移动服务状态透传。"""
 
         if self._vehicle is None:
             raise ArmUnavailableError("车辆对齐服务未接线到本服务实例")

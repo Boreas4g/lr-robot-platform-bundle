@@ -21,7 +21,7 @@ LR-02,智巡二号
 在控制站项目目录执行：
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 
 # 仅第一次执行：创建 10 年维护根 CA。立即把 ca.key 离线加密备份。
 sudo ./scripts/manage-fleet-pki.sh init-ca
@@ -70,7 +70,7 @@ sudo systemctl restart lr-platform.service
 ## 交付一台机器人
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 sudo ./scripts/manage-fleet-pki.sh export-robot LR-01
 ```
 

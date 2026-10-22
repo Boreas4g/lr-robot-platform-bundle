@@ -28,7 +28,7 @@ from typing import Any, Sequence
 
 # 支持在未安装依赖包的源码仓库中直接运行。
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-AIM_SDK_SOURCE_ROOT = PROJECT_ROOT.parent.parent / "aim_sdk"
+AIM_SDK_SOURCE_ROOT = PROJECT_ROOT.parents[3] / "drivers" / "aim_sdk"
 if str(AIM_SDK_SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(AIM_SDK_SOURCE_ROOT))
 

@@ -1,8 +1,8 @@
-# LR 图书馆机器人平台 — 全系统代码备份
+# LR 图书馆机器人平台 — 当前全系统开发工作区
 
-采集于 2026-10-16，来源机器为本机器人车载电脑兼控制站（boreas 主机）。
-本仓库整合该平台**全部功能代码与相关数据文件**，对应线上 13 个 `lr-*` systemd
-服务所涉及的全部代码路径。
+本目录是当前开发与部署使用的权威工作区，来源机器为本机器人车载电脑兼控制站
+（boreas 主机）。这里整合该平台**全部功能代码与相关数据文件**，对应线上 13 个
+`lr-*` systemd 服务所涉及的全部代码路径。
 
 ## 系统架构与代码分布
 
@@ -26,8 +26,8 @@ lr-station-discovery.service ──> 局域网发现广播
 
 | 路径 | 内容 | 来源 |
 | --- | --- | --- |
-| `LR-Web/` | **控制站主仓库完整工作树**：前端源码 `src/`、构建产物 `dist/`（:8000 托管的数据）、`apps/control-api/`（FastAPI :8080）、`apps/edge-gateway/`、`external/lingzu-bookarm-py/`（**机械臂服务 + D435 书脊视觉识别 + 标定数据**）、`external/Library_robot/`（**ROS2 车端源码镜像：car_ctrl 底盘电机驱动、robot_decision 边缘网关/决策、nav2_minimal_bringup 导航、dual_laser_merger 雷达合并、cartographer 建图、语音交互、realsense/lslidar 驱动、地图**）、`external/rod-motor-firmware/`（ESP32 杆电机固件）、`scripts/` 运维脚本、`desktop/` 桌面端、`cloudflare-worker/`、`infra/`、`contracts/`、`docs/` | `/home/boreas/project/LR/LR-Web` |
-| `drivers/aim_sdk/` | YZ-AIM 一体化伺服电机 Python SDK（RS485/Modbus，升降台驱动，bookarm 硬件依赖，未被 vendor 进任何仓库） | `/home/boreas/LR/lingzu-bookarm-py/aim_sdk` |
+| `LR-Web/` | **控制站主仓库完整工作树**：前端源码 `src/`、构建产物 `dist/`（:8000 托管的数据）、`apps/control-api/`（FastAPI :8080）、`apps/edge-gateway/`、`external/lingzu-bookarm-py/`（**机械臂服务 + D435 书脊视觉识别 + 标定数据**）、`external/Library_robot/`（**ROS2 车端源码镜像：car_ctrl 底盘电机驱动、robot_decision 边缘网关/决策、nav2_minimal_bringup 导航、dual_laser_merger 雷达合并、cartographer 建图、语音交互、realsense/lslidar 驱动、地图**）、`external/rod-motor-firmware/`（ESP32 杆电机固件）、`scripts/` 运维脚本、`desktop/` 桌面端、`cloudflare-worker/`、`infra/`、`contracts/`、`docs/` | `/home/boreas/lr-robot-platform-bundle/LR-Web` |
+| `drivers/aim_sdk/` | YZ-AIM 一体化伺服电机 Python SDK（RS485/Modbus，升降台驱动，BookArm 硬件依赖） | `/home/boreas/lr-robot-platform-bundle/drivers/aim_sdk` |
 | `drivers/rf2o_laser_odometry/` | 激光雷达 2D 里程计 ROS2 包（含本机未提交的 `/scan_f` 话题适配） | `/home/boreas/rf2o_laser_odometry` |
 | `drivers/robot_4wd_dds115_base_controller/` | 4WD DDSM115 轮毂电机 RS485 控制器（ROS1 版，含本机测试脚本） | `/home/boreas/robot_4wd_dds115_base_controller` |
 | `protection/protection-src/` | 许可证保护工具链源码（Ed25519 签名守护、Cython 打包工具；**不含密钥**） | `/home/boreas/lr-protection-build/protection-src` |
@@ -45,8 +45,8 @@ lr-station-discovery.service ──> 局域网发现广播
 **可重建产物排除**：`node_modules/`（`package-lock.json` 可重现）、ROS `build/ install/ log/`、
 `__pycache__/`、`src/.umi*`、`.turbopack/`、各目录 `.git/`。
 
-**重复/历史副本排除**（现行代码已在本备份内）：
-`~/LR/Library_robot/`（live 工作区，源码与 `LR-Web/external/Library_robot/` 逐字节一致，仅多编译产物）、
+**重复/历史副本排除**（开发与部署统一以本目录为准）：
+`~/LR/Library_robot/`（旧工作区副本，源码与 `LR-Web/external/Library_robot/` 逐字节一致，仅多编译产物）、
 `~/realsense_ros/`（上游干净克隆 realsenseai/realsense-ros @4.57.7，源码已 vendor 进 ROS 工作区）、
 `~/project/lingzu_arm/`（bookarm 退役快照，落后 5 个提交）、`~/project/rod-motor-firmware/`（与 external 逐字节一致）、
 `LR-Web/lr-oneclick-deploy-20261008.tar.gz`（410M 旧部署归档，含凭据）。

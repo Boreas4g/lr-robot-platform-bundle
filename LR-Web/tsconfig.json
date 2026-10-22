@@ -19,5 +19,14 @@
       "@root/*": ["./*"]
     }
   },
-  "include": ["./**/*.d.ts", "./**/*.ts", "./**/*.tsx"]
+  "include": ["./**/*.d.ts", "./**/*.ts", "./**/*.tsx"],
+  "exclude": [
+    "./node_modules",
+    "./dist",
+    "./.dev-dist",
+    "./cloudflare-worker/**",
+    "./external/Library_robot/build/**",
+    "./external/Library_robot/install/**",
+    "./external/Library_robot/log/**"
+  ]
 }

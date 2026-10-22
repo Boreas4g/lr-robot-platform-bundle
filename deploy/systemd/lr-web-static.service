@@ -8,7 +8,7 @@ Wants=network-online.target
 Type=simple
 User=boreas
 Group=boreas
-WorkingDirectory=/home/boreas/project/LR/LR-Web
+WorkingDirectory=/home/boreas/lr-robot-platform-bundle/LR-Web
 # /bookarm-api 反代需要 BookArm Bearer token（bookarm 服务所有接口强制鉴权）
 EnvironmentFile=-/etc/lr-bookarm/bookarm.env
 ExecStart=/usr/bin/node scripts/serve-static.cjs --port 8000

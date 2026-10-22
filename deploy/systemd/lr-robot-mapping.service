@@ -9,9 +9,9 @@ Conflicts=lr-robot-runtime.service
 [Service]
 Type=simple
 User=boreas
-WorkingDirectory=/home/boreas/LR/Library_robot
+WorkingDirectory=/home/boreas/lr-robot-platform-bundle/LR-Web/external/Library_robot
 Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
-ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/boreas/LR/Library_robot/install/setup.bash && exec ros2 launch mobile_robot_nav_bringup mapping_with_drivers.launch.py use_rviz:=false'
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/boreas/lr-robot-platform-bundle/LR-Web/external/Library_robot/install/setup.bash && exec ros2 launch mobile_robot_nav_bringup mapping_with_drivers.launch.py use_rviz:=false'
 Restart=on-failure
 RestartSec=5
 # 与 lr-robot-runtime 一致：运动控制栈优先调度，避免建图遥控卡顿。

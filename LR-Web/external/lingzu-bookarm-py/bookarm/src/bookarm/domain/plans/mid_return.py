@@ -148,17 +148,17 @@ class MidReturnMotionPlan:
     spine_tilt_fail_on_unknown: bool = False
     # 画面正中区域宽度占比（水平方向 0.40 = 正中 40% 带宽）
     align_center_band_ratio: float = 0.40
-    # 车辆脉冲缓移速度（升降杆高位，务必缓速）
+    # 车辆对齐低速由车端配置；该字段保留旧 profile 兼容。
     align_pulse_speed_mps: float = 0.03
-    # 单次对齐脉冲的移动距离（cm）：每次脉冲固定移动该距离后重新识别，
-    # 直至进入正中带宽；调参页以 cm 调整
-    align_step_cm: float = 0.6
-    # 遗留字段：比例式脉冲（偏差像素→毫米增益）已被 align_step_cm 定长脉冲
-    # 取代，仅为兼容旧 profile 保留，不再参与计算
+    # 旧调参字段，仅为读取历史 profile 保留；运行时使用外参估算距离，
+    # 每次最多 20 cm（车端定距接口的硬上限）。
+    align_step_cm: float = 20.0
+    # 旧版像素距离增益，保留 profile 兼容；运行时距离由相机外参映射计算。
     align_px_to_mm: float = 0.5
+    # 旧版脉冲接口参数，保留 profile 兼容；定距移动的速度/停车由车端控制。
     align_pulse_min_ms: int = 100
-    align_pulse_max_ms: int = 400
-    # 每次脉冲后的稳定等待
+    align_pulse_max_ms: int = 500
+    # 每次底盘定距移动后的稳定等待
     align_settle_ms: int = 600
     align_max_moves: int = 8
     align_max_travel_m: float = 0.20

@@ -6,9 +6,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=boreas
-WorkingDirectory=/home/boreas/LR/Library_robot
+WorkingDirectory=/home/boreas/lr-robot-platform-bundle/LR-Web/external/Library_robot
 EnvironmentFile=-/etc/lr-robot/runtime.env
-ExecStart=/home/boreas/LR/Library_robot/scripts/start-robot-runtime.sh
+ExecStart=/home/boreas/lr-robot-platform-bundle/LR-Web/external/Library_robot/scripts/start-robot-runtime.sh
 Restart=on-failure
 RestartSec=10
 # 运动控制栈优先于同机的控制站/桌面进程调度，降低 CPU 抖动引起的

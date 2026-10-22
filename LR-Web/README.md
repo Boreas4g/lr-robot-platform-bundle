@@ -3,7 +3,7 @@
 面向实体图书馆机器人的管理与调度平台。前端基于官方 [Ant Design Pro](https://github.com/ant-design/ant-design-pro) 构建，项目目录为：
 
 ```text
-/home/boreas/project/LR/LR-Web
+/home/boreas/lr-robot-platform-bundle/LR-Web
 ```
 
 ## 当前完成内容
@@ -27,7 +27,7 @@
 仅查看页面可使用前端 Mock：
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 export PATH="$PWD/.tools/node/bin:$PATH"
 npm ci
 npm run dev

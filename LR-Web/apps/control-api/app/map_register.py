@@ -22,7 +22,13 @@ VEHICLE_MAP_STORE_DIR = Path("/var/lib/lr-robot/maps")
 REGISTER_SCRIPT = Path(
     os.environ.get(
         "LR_REGISTER_ROBOT_MAP_SCRIPT",
-        "/home/boreas/LR/Library_robot/scripts/register-robot-map.sh",
+        str(
+            Path(__file__).resolve().parents[3]
+            / "external"
+            / "Library_robot"
+            / "scripts"
+            / "register-robot-map.sh"
+        ),
     )
 )
 REGISTER_TIMEOUT_SECONDS = 120

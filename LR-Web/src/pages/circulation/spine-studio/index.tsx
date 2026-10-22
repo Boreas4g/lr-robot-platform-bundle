@@ -59,11 +59,6 @@ import {
   visionDebugImageUrl,
   visionDebugSpineCheck,
 } from '@/services/libraryRobot/studio';
-import {
-  getTuningProfile,
-  saveTuningProfile,
-  type TuningKind,
-} from '@/services/libraryRobot/tuning';
 import type { Book } from '@/services/libraryRobot/types';
 import { errorMessage } from '@/utils/errorText';
 
@@ -253,9 +248,6 @@ export default function SpineStudioPage() {
   const [fvAlign, setFvAlign] = useState<VisionAlignRunResult>();
   const [fvVehicle, setFvVehicle] = useState<VehicleAlignStatus>();
   const [fvVehicleError, setFvVehicleError] = useState<string>();
-  // 居中对齐「单次微调距离」（cm）：读取自取书 profile，保存时同步三个流程。
-  const [fvAlignStepCm, setFvAlignStepCm] = useState<number>();
-  const [fvAlignStepSaving, setFvAlignStepSaving] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [manualPoints, setManualPoints] = useState<[number, number][]>([]);
   const [manualName, setManualName] = useState('');
@@ -337,38 +329,6 @@ export default function SpineStudioPage() {
     const timer = window.setInterval(() => void refreshFvVehicle(), 5_000);
     return () => window.clearInterval(timer);
   }, [refreshFvVehicle]);
-
-  // 单次微调距离：启动时读取取书 profile（三个流程共用同一语义）。
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const profile = await getTuningProfile('take');
-        const value = Number(profile.align_step_cm);
-        if (!cancelled && Number.isFinite(value)) setFvAlignStepCm(value);
-      } catch {
-        // 读取失败保持空值，不干扰功能调试主流程。
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  async function saveFvAlignStep() {
-    if (fvAlignStepCm === undefined) return;
-    setFvAlignStepSaving(true);
-    try {
-      for (const kind of ['take', 'return', 'midreturn'] as TuningKind[]) {
-        await saveTuningProfile(kind, { align_step_cm: fvAlignStepCm });
-      }
-      message.success('单次微调距离已保存并热生效（取书/还书/中位还书）');
-    } catch (error) {
-      message.error(errorMessage(error, '保存单次微调距离失败'));
-    } finally {
-      setFvAlignStepSaving(false);
-    }
-  }
 
   async function runFvCheck() {
     if (!fvLibraryId) {
@@ -749,6 +709,25 @@ export default function SpineStudioPage() {
     }
   }
 
+  const checkBand = fvCheck?.center_band;
+  const checkCenterTarget =
+    fvCheck?.center_x_target_ratio ??
+    (checkBand ? (checkBand[0] + checkBand[1]) / 2 : undefined);
+  const checkCenterTolerance =
+    fvCheck?.center_tolerance_ratio ??
+    (checkBand
+      ? Math.min(0.005, (checkBand[1] - checkBand[0]) / 4)
+      : undefined);
+  const checkIsCentered =
+    fvCheck?.centered_at_band_midpoint ??
+    (fvCheck?.center_x_ratio !== null &&
+    fvCheck?.center_x_ratio !== undefined &&
+    checkCenterTarget !== undefined &&
+    checkCenterTolerance !== undefined
+      ? Math.abs(fvCheck.center_x_ratio - checkCenterTarget) <=
+        checkCenterTolerance
+      : undefined);
+
   return (
     <PageContainer
       title="书脊工作台（手动分割）"
@@ -1056,13 +1035,15 @@ export default function SpineStudioPage() {
         extra={
           <Space wrap>
             <Typography.Text type={fvVehicle ? 'success' : 'danger'}>
-              <CarOutlined /> 车辆脉冲服务：
+              <CarOutlined /> 车辆定距服务：
               {fvVehicle
-                ? fvVehicle.moving
-                  ? `移动中（${fvVehicle.out_linear.toFixed(3)} m/s）`
-                  : `在线（${fvVehicle.pulse_speed} m/s · 行程 ${fvVehicle.travel_m_est.toFixed(3)} m${
-                      fvVehicle.travel_locked ? ' · 行程闸冷却中' : ''
-                    }）`
+                ? !fvVehicle.odom_available
+                  ? '在线，但 /odom 不可用（禁止定距移动）'
+                  : fvVehicle.moving
+                    ? `移动中（${fvVehicle.out_linear.toFixed(3)} m/s）`
+                    : `在线（${fvVehicle.pulse_speed} m/s · 里程 ${fvVehicle.travel_m_est.toFixed(3)} m${
+                        fvVehicle.travel_locked ? ' · 行程闸冷却中' : ''
+                      }）`
                 : (fvVehicleError ?? '离线')}
             </Typography.Text>
             <Select
@@ -1105,29 +1086,15 @@ export default function SpineStudioPage() {
           </Space>
         }
       >
-        <Space wrap style={{ marginBottom: 12 }}>
-          <Typography.Text>单次微调距离</Typography.Text>
-          <InputNumber
-            min={0.1}
-            max={5}
-            step={0.1}
-            precision={1}
-            value={fvAlignStepCm}
-            onChange={(value) => setFvAlignStepCm(value ?? undefined)}
-            addonAfter="cm"
-            style={{ width: 140 }}
-          />
-          <Button
-            onClick={() => void saveFvAlignStep()}
-            loading={fvAlignStepSaving}
-            disabled={fvAlignStepCm === undefined}
-          >
-            保存
-          </Button>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            「执行居中对齐」与取书/还书/中位还书自动流程的每次脉冲移动距离；保存后立即热生效并持久化。
-          </Typography.Text>
-        </Space>
+        <Typography.Text
+          type="secondary"
+          style={{ display: 'block', marginBottom: 12, fontSize: 12 }}
+        >
+          对齐目标是当前机械臂 IK 舒适区间的中点。系统按 D435
+          外参和深度一次计算位移，单次最多 20
+          cm（车端硬限幅），到位复扫后把中心误差校正到画面宽度 0.5%
+          以内（窄舒适区会采用更小容差）；累计行程仍受安全上限约束。
+        </Typography.Text>
         {fvCheckError ? (
           <Alert
             showIcon
@@ -1142,7 +1109,7 @@ export default function SpineStudioPage() {
             description={fvCheck.detail ?? '未识别到书脊'}
           />
         ) : null}
-        {fvCheck && fvCheck.matched ? (
+        {fvCheck?.matched ? (
           <>
             <Descriptions column={{ xs: 1, md: 3 }} size="small">
               <Descriptions.Item label="书脊倾斜角">
@@ -1168,21 +1135,44 @@ export default function SpineStudioPage() {
                   ? '-'
                   : `${(fvCheck.center_x_ratio * 100).toFixed(1)}%`}
               </Descriptions.Item>
-              <Descriptions.Item label="正中区域">
+              <Descriptions.Item label="机械臂舒适抓取区">
                 {fvCheck.center_band
                   ? `${(fvCheck.center_band[0] * 100).toFixed(0)}% ~ ${(
                       fvCheck.center_band[1] * 100
                     ).toFixed(0)}%`
                   : '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="居中判定">
-                {fvCheck.in_band === null || fvCheck.in_band === undefined ? (
-                  '-'
-                ) : fvCheck.in_band ? (
-                  <Typography.Text type="success">在正中区域</Typography.Text>
+              <Descriptions.Item label="舒适区间中点">
+                {checkCenterTarget === undefined
+                  ? '-'
+                  : `${(checkCenterTarget * 100).toFixed(1)}%`}
+              </Descriptions.Item>
+              <Descriptions.Item label="可达性计算">
+                {fvCheck.reachability_checked ? (
+                  <Typography.Text
+                    type={fvCheck.center_band ? 'success' : 'danger'}
+                  >
+                    {fvCheck.center_band
+                      ? `整条取书 IK 姿态链通过（${fvCheck.reachable_samples ?? 0}/${fvCheck.reachability_samples ?? 0} 点）`
+                      : (fvCheck.reachability_detail ?? '未找到连续舒适区')}
+                  </Typography.Text>
                 ) : (
                   <Typography.Text type="warning">
-                    偏离正中（作业时将触发车辆缓移对齐）
+                    {fvCheck.reachability_detail ?? '未计算机械臂可达范围'}
+                  </Typography.Text>
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label="居中判定">
+                {checkIsCentered === null || checkIsCentered === undefined ? (
+                  '-'
+                ) : checkIsCentered ? (
+                  <Typography.Text type="success">
+                    已在区间中点容差内（±
+                    {((checkCenterTolerance ?? 0) * 100).toFixed(1)}%）
+                  </Typography.Text>
+                ) : (
+                  <Typography.Text type="warning">
+                    偏离区间中点（实测将按目标距离校正）
                   </Typography.Text>
                 )}
               </Descriptions.Item>
@@ -1197,10 +1187,12 @@ export default function SpineStudioPage() {
             </Descriptions>
             {fvCheck.center_x_ratio !== null &&
             fvCheck.center_x_ratio !== undefined &&
-            fvCheck.center_band ? (
+            fvCheck.center_band &&
+            checkCenterTarget !== undefined ? (
               <div style={{ marginTop: 12 }}>
                 <Typography.Text type="secondary">
-                  画面水平位置（竖线为书脊中心，绿色为正中区域）
+                  画面水平位置（蓝线为舒适区间中点，绿带为 IK
+                  舒适抓取区，黄/绿竖线为书脊中心）
                 </Typography.Text>
                 <div
                   style={{
@@ -1225,12 +1217,24 @@ export default function SpineStudioPage() {
                   <div
                     style={{
                       position: 'absolute',
+                      left: `${checkCenterTarget * 100}%`,
+                      width: 2,
+                      top: 0,
+                      bottom: 0,
+                      marginLeft: -1,
+                      background: '#1677ff',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
                       left: `${fvCheck.center_x_ratio * 100}%`,
                       width: 3,
                       top: 0,
                       bottom: 0,
                       marginLeft: -1,
-                      background: fvCheck.in_band ? '#52c41a' : '#faad14',
+                      background: checkIsCentered ? '#52c41a' : '#faad14',
+                      zIndex: 1,
                     }}
                   />
                 </div>
@@ -1264,7 +1268,7 @@ export default function SpineStudioPage() {
                   ) : fvAlign.align_skipped ? (
                     `跳过（${fvAlign.align_skipped}）`
                   ) : (
-                    '本就在正中区域'
+                    '已在动态舒适区间中点容差内'
                   )}
                 </Descriptions.Item>
                 <Descriptions.Item label="最终中心位置">
@@ -1273,20 +1277,33 @@ export default function SpineStudioPage() {
                     ? '-'
                     : `${(fvAlign.final_center_x_ratio * 100).toFixed(1)}%`}
                 </Descriptions.Item>
-                <Descriptions.Item label="累计行程（估算）">
+                <Descriptions.Item label="舒适区间中点">
+                  {fvAlign.align_center_target_x_ratio === undefined
+                    ? '-'
+                    : `${(fvAlign.align_center_target_x_ratio * 100).toFixed(1)}%`}
+                </Descriptions.Item>
+                <Descriptions.Item label="最终中点偏差">
+                  {fvAlign.align_center_error_ratio === undefined
+                    ? '-'
+                    : `${(fvAlign.align_center_error_ratio * 100).toFixed(2)}%`}
+                </Descriptions.Item>
+                <Descriptions.Item label="累计行程（里程计）">
                   {fvAlign.align_travel_m === undefined
                     ? '-'
                     : `${(fvAlign.align_travel_m * 1000).toFixed(1)} mm`}
                 </Descriptions.Item>
-                <Descriptions.Item label="脉冲记录">
-                  {!fvAlign.align_pulses || fvAlign.align_pulses.length === 0
+                <Descriptions.Item label="定距移动记录">
+                  {!fvAlign.align_move_details ||
+                  fvAlign.align_move_details.length === 0
                     ? '无'
-                    : fvAlign.align_pulses
+                    : fvAlign.align_move_details
                         .map(
-                          (pulse) =>
-                            `${pulse.direction === 'forward' ? '前进' : '后退'} ${
-                              pulse.duration_ms
-                            }ms`,
+                          (move) =>
+                            `${move.direction === 'forward' ? '前进' : '后退'} 请求 ${(
+                              move.requested_distance_m * 1000
+                            ).toFixed(
+                              1,
+                            )} mm，里程 ${(move.travelled_distance_m * 1000).toFixed(1)} mm`,
                         )
                         .join('；')}
                 </Descriptions.Item>

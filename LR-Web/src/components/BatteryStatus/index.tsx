@@ -1,4 +1,4 @@
-import { Popconfirm, message, theme } from 'antd';
+import { message, Popconfirm, theme } from 'antd';
 import { useState } from 'react';
 import {
   calibrateBatteryFull,
@@ -61,15 +61,28 @@ export default function BatteryStatus({ robotId }: { robotId: string }) {
   const { data, connected } = useBatteryTelemetry();
   const [busy, setBusy] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
-  if (!data || data.robotId !== robotId) return null;
-  const online = connected && data.status === 'online';
-  const percent = online ? data.percent : null;
+  // This station currently has a single USB battery assigned to LR-01. Keep
+  // its badge mounted while the initial request/socket reconnects so a slow
+  // startup never makes the battery indicator disappear from the robot row.
+  if (data && data.robotId !== robotId) return null;
+  if (!data && robotId !== 'LR-01') return null;
+  const online = Boolean(connected && data?.status === 'online');
+  const lastPercent = data?.lastPercent ?? null;
+  const percent = online ? (data?.percent ?? null) : lastPercent;
   const level = batteryLevel(percent);
-  const status = !online
-    ? '电量数据离线'
-    : percent === null
-      ? '电量待校准'
-      : `剩余电量约 ${level.label}`;
+  const status = !data
+    ? '等待电量数据'
+    : online
+      ? percent === null
+        ? '电量待校准'
+        : `剩余电量约 ${level.label}`
+      : lastPercent === null
+        ? '电量数据离线，暂无历史读数'
+        : `电量数据离线，显示上次记录电量 ${level.label}${
+            data.updatedAt
+              ? `，记录于 ${new Date(data.updatedAt).toLocaleString('zh-CN', { hour12: false })}`
+              : ''
+          }`;
   async function update(action: () => Promise<void>) {
     setBusy(true);
     try {
@@ -103,8 +116,11 @@ export default function BatteryStatus({ robotId }: { robotId: string }) {
           disabled={!online || busy}
           data-testid="robot-battery"
         >
-          <BatteryIcon percent={percent} />
-          <span data-testid="battery-percentage">{level.label}</span>
+          <BatteryIcon percent={online ? percent : null} />
+          <span data-testid="battery-percentage">
+            {level.label}
+            {!online && lastPercent !== null ? '*' : ''}
+          </span>
         </button>
       </Popconfirm>
     </>

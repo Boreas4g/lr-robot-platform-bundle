@@ -8,9 +8,9 @@ Type=simple
 User=boreas
 Group=boreas
 SupplementaryGroups=dialout
-WorkingDirectory=/home/boreas/LR/Library_robot
+WorkingDirectory=/home/boreas/lr-robot-platform-bundle/LR-Web/external/Library_robot
 Environment=HOME=/home/boreas
-Environment=LR_ROBOT_WORKSPACE=/home/boreas/LR/Library_robot
+Environment=LR_ROBOT_WORKSPACE=/home/boreas/lr-robot-platform-bundle/LR-Web/external/Library_robot
 Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 ExecStart=/usr/local/libexec/lr-start-xt369p-battery.sh /etc/lr-robot/xt369p-battery.yaml
 Restart=always

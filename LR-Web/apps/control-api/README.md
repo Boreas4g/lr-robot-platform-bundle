@@ -5,7 +5,7 @@
 ## 方式一：使用 Conda 本地启动 API（推荐）
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 conda activate lr-control-api
 LR_STORAGE_BACKEND=memory \
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
@@ -14,7 +14,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
 首次配置 Conda 环境：
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 conda create -y -n lr-control-api python=3.11 pip
 conda activate lr-control-api
 python -m pip install -e 'apps/control-api[dev]'
@@ -39,7 +39,7 @@ curl http://127.0.0.1:8080/health
 保持 API 终端运行，再开第二个终端：
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 export PATH="$PWD/.tools/node/bin:$PATH"
 export LR_API_URL=http://127.0.0.1:8080
 npm ci                         # 仅首次执行
@@ -69,7 +69,7 @@ Authorization: Bearer <token>
 ## 方式三：Docker 启动基础服务，本机 Conda 运行 API
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 docker compose -f infra/docker-compose/docker-compose.yml up -d postgres redis minio emqx
 docker compose -f infra/docker-compose/docker-compose.yml ps
 ```
@@ -77,7 +77,7 @@ docker compose -f infra/docker-compose/docker-compose.yml ps
 Docker 仅启动 PostgreSQL、Redis、MinIO 和 EMQX。再另开一个终端，以 Conda 启动连接这些服务的 FastAPI：
 
 ```bash
-cd /home/boreas/project/LR/LR-Web
+cd /home/boreas/lr-robot-platform-bundle/LR-Web
 conda activate lr-control-api
 export LR_STORAGE_BACKEND=postgres
 export LR_DATABASE_URL='postgresql://library_robot:change-me-before-production@127.0.0.1:5432/library_robot'

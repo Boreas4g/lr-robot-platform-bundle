@@ -564,8 +564,17 @@ export type VisionSpineCheckResult = {
   tilt_max_deg?: number;
   tilt_ok?: boolean;
   center_x_ratio?: number | null;
-  center_band?: [number, number];
+  center_band?: [number, number] | null;
   in_band?: boolean | null;
+  center_x_target_ratio?: number | null;
+  center_x_error_ratio?: number | null;
+  center_tolerance_ratio?: number | null;
+  centered_at_band_midpoint?: boolean | null;
+  reachability_checked?: boolean;
+  reachability_detail?: string;
+  reachability_margin_rad?: number;
+  reachability_samples?: number;
+  reachable_samples?: number;
   polygon_uv?: [number, number][];
   frame_width_px?: number;
   frame_height_px?: number;
@@ -583,7 +592,19 @@ export type VisionAlignRunResult = {
   align_moves?: number;
   align_travel_m?: number;
   align_center_x_final?: number;
-  align_pulses?: { direction: string; duration_ms: number }[];
+  align_center_target_x_ratio?: number;
+  align_center_error_ratio?: number;
+  align_center_tolerance_ratio?: number;
+  align_center_band?: [number, number];
+  align_move_details?: {
+    direction: string;
+    offset_px: number;
+    estimated_distance_m: number;
+    requested_distance_m: number;
+    travelled_distance_m: number;
+    odom_error_m: number;
+    duration_s?: number;
+  }[];
   final_center_x_ratio?: number | null;
   final_capture_id?: string;
 };
@@ -596,6 +617,9 @@ export type VehicleAlignStatus = {
   travel_locked: boolean;
   pulse_speed: number;
   accel: number;
+  odom_available: boolean;
+  move_distance_m?: number;
+  move_progress_m?: number;
 };
 
 /** 拍照匹配书脊模板并计算倾斜角/居中位置（不动车）。 */

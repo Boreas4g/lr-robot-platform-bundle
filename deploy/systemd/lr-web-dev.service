@@ -1,0 +1,22 @@
+[Unit]
+Description=LR 控制站前端本地开发服务（Umi，8001，仅限本机）
+Wants=network-online.target lr-platform.service lr-web-static.service
+After=network-online.target lr-platform.service lr-web-static.service
+
+[Service]
+Type=simple
+User=boreas
+Group=boreas
+WorkingDirectory=/home/boreas/lr-robot-platform-bundle/LR-Web
+Environment=HOST=127.0.0.1
+Environment=PORT=8001
+Environment=STRICT_PORT=8001
+ExecStart=/usr/bin/npm run dev
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target

@@ -6,6 +6,7 @@ import math
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from unittest.mock import Mock
 
 from bookarm.api.requests import ReturnBookToEndRequest, TakeBookRequest, TakeBookStage
 from bookarm.api.sdk import BookArmSDK
@@ -211,8 +212,8 @@ class TakeBookWorkflowTests(unittest.TestCase):
             [
                 "lift_move",
                 "vision_target",
-                "post_vision_align",
                 "arm_debug_pose",
+                "post_vision_align",
                 "reachability_check",
                 "book_grasp",
                 "book_stand_place",
@@ -235,7 +236,10 @@ class TakeBookWorkflowTests(unittest.TestCase):
         task = sdk.take_book(_request(stop_after=TakeBookStage.ARM_DEBUG_POSE))
 
         self.assertEqual(task.state, TaskState.SUCCEEDED)
-        self.assertEqual([stage.name for stage in task.result.stages], ["lift_move", "vision_target", "post_vision_align", "arm_debug_pose"])
+        self.assertEqual(
+            [stage.name for stage in task.result.stages],
+            ["lift_move", "vision_target", "arm_debug_pose"],
+        )
         self.assertEqual(arm.calls, ["is_enabled"])
         self.assertTrue(task.result.payload["arm_was_enabled"])
         self.assertFalse(task.result.payload["arm_moved_to_zero"])
@@ -642,6 +646,68 @@ class TakeBookReachabilityTests(unittest.TestCase):
         self.assertEqual(task.state, TaskState.SUCCEEDED)
         self.assertNotIn("reachability_check", [stage.name for stage in task.result.stages])
         self.assertEqual(self._checks(arm), [])
+
+
+class TakeBookAlignmentHandoffTests(unittest.TestCase):
+    @staticmethod
+    def _target(ratio, x, capture):
+        cx = ratio * 1280
+        pose = BasePose(x, 0.1, 0.3, 0.0, 0.0, 0.0)
+        return BookTarget(
+            raw_pose=pose, grasp_pose=pose, pixel_uv=(int(cx), 360),
+            polygon_uv=((cx - 20, 200), (cx + 20, 200),
+                        (cx + 20, 520), (cx - 20, 520)),
+            frame_width_px=1280, frame_height_px=720,
+            horizontal_pixel_to_base_m=(0.0005, 0.0, 0.0),
+            capture_id=capture,
+        )
+
+    def _aligned_sdk(self, final_ratio):
+        plan = TakeBookMotionPlan(align_settle_ms=0)
+        sdk, arm, reservation = _sdk(plan=plan)
+        final = self._target(final_ratio, 0.31, "after-alignment")
+        sdk._take_book.vision = Mock()
+        sdk._take_book.vision.locate_book.side_effect = [
+            self._target(0.8, 0.21, "before-alignment"), final,
+        ]
+        vehicle = Mock()
+        vehicle.move_distance.return_value = {
+            "ok": True, "travelled_distance_m": 0.192,
+        }
+        sdk._take_book.vehicle_align = vehicle
+        return sdk, arm, vehicle, final, plan
+
+    @patch("bookarm.application.post_vision.calculate_comfortable_center_band",
+           return_value=((0.4, 0.6), {"checked": True}))
+    def test_safe_rescan_hands_latest_pose_to_grasp_without_reverse(self, _band):
+        sdk, arm, vehicle, final, plan = self._aligned_sdk(0.49)
+        task = sdk.take_book(_request(stop_after=TakeBookStage.BOOK_GRASP))
+        self.assertEqual(task.state, TaskState.SUCCEEDED)
+        vehicle.move_distance.assert_called_once()
+        self.assertEqual(task.result.payload["final_capture_id"], final.capture_id)
+        self.assertEqual(
+            [s.name for s in task.result.stages][-3:],
+            ["post_vision_align", "reachability_check", "book_grasp"],
+        )
+        pregrasp = next(c[1] for c in arm.calls
+                        if isinstance(c, tuple) and c[0] == "move_to_pose_by_move_j")
+        self.assertEqual(pregrasp, final.grasp_pose.offset_cm(
+            plan.pregrasp_offset_cm, rpy_deg=plan.grasp_rpy_deg,
+        ))
+
+    @patch("bookarm.application.post_vision.calculate_comfortable_center_band",
+           return_value=((0.4, 0.6), {"checked": True}))
+    def test_crossing_safe_band_fails_before_reverse_or_grasp(self, _band):
+        sdk, arm, vehicle, _final, _plan = self._aligned_sdk(0.2)
+        task = sdk.take_book(_request(stop_after=TakeBookStage.BOOK_GRASP))
+        self.assertEqual(task.state, TaskState.FAILED)
+        self.assertIn("停止反向追赶", task.result.error)
+        self.assertEqual(task.result.stages[-1].name, "post_vision_align")
+        vehicle.move_distance.assert_called_once()
+        self.assertNotIn("close_gripper", arm.calls)
+        self.assertFalse(any(isinstance(c, tuple) and c[0] in
+                             {"move_l", "move_to_pose_by_move_j", "open_gripper"}
+                             for c in arm.calls))
 
 
 class TakeBookEmptyGraspTests(unittest.TestCase):

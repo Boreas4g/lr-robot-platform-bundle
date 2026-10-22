@@ -6,10 +6,10 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=boreas
-WorkingDirectory=/home/boreas/project/lingzu_arm/lingzu-bookarm-py/bookarm
+WorkingDirectory=/home/boreas/lr-robot-platform-bundle/LR-Web/external/lingzu-bookarm-py/bookarm
 Environment=HOME=/home/boreas
-Environment=LR_BOOKARM_ROOT=/home/boreas/project/lingzu_arm/lingzu-bookarm-py/bookarm
-Environment=LR_ROBOT_WORKSPACE=/home/boreas/LR/Library_robot
+Environment=LR_BOOKARM_ROOT=/home/boreas/lr-robot-platform-bundle/LR-Web/external/lingzu-bookarm-py/bookarm
+Environment=LR_ROBOT_WORKSPACE=/home/boreas/lr-robot-platform-bundle/LR-Web/external/Library_robot
 EnvironmentFile=-/etc/lr-robot/bookarm.env
 ExecStart=/usr/local/libexec/lr-start-bookarm-runtime.sh
 Restart=on-failure

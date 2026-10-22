@@ -12,6 +12,9 @@ const { UMI_ENV = 'dev' } = process.env;
 // Keep production same-origin, but expose the API origin for the dev realtime client.
 const realtimeApiOrigin =
   UMI_ENV === 'dev' ? (process.env.LR_API_URL ?? 'http://127.0.0.1:8080') : '';
+// The dev server cleans its output directory on startup; keep it separate so
+// it cannot erase the production files served by scripts/serve-static.cjs.
+const outputPath = process.env.LR_WEB_OUTPUT_PATH ?? 'dist';
 
 // Compute commit hash: env vars take precedence, fall back to git at build time
 const commitHash =
@@ -38,6 +41,7 @@ const commitHash =
 const PUBLIC_PATH: string = '/';
 
 export default defineConfig({
+  outputPath,
   alias: {
     '@root': join(__dirname, '..'),
   },

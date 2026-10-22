@@ -15,7 +15,7 @@ set -u
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
 export no_proxy="127.0.0.1,localhost" NO_PROXY="127.0.0.1,localhost"
 
-LR_WEB_ROOT="/home/boreas/project/LR/LR-Web"
+LR_WEB_ROOT="/home/boreas/lr-robot-platform-bundle/LR-Web"
 BOOKARM_ROOT="$LR_WEB_ROOT/external/lingzu-bookarm-py/bookarm"
 NODE22_DIR="$LR_WEB_ROOT/.tools/node-v22.17.0-linux-x64/bin"
 CONDA_BOOKARM="/home/boreas/miniconda3/envs/bookarm/bin/python"

@@ -1,6 +1,6 @@
 # 私有配置文件清单（未纳入本备份）
 
-按项目安全规则（`/home/boreas/LR/AGENTS.md`、`Library_robot/AGENTS.md`：
+按项目安全规则（`LR-Web/external/Library_robot/AGENTS.md`：
 「不得将私钥、MQTT 密码、证书或 /etc/lr-robot/ 私有配置提交到 Git」），
 下列**线上私有配置与凭据一律未纳入**本备份与 Git 仓库。恢复系统时需从本机
 原位置或加密备份渠道获取。

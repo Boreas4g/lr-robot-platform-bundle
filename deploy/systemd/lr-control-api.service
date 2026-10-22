@@ -8,7 +8,7 @@ Wants=network-online.target
 Type=simple
 User=boreas
 Group=boreas
-WorkingDirectory=/home/boreas/project/LR/LR-Web/apps/control-api
+WorkingDirectory=/home/boreas/lr-robot-platform-bundle/LR-Web/apps/control-api
 # 直接调用 conda 环境内的 uvicorn（不经过 conda run 包装器，避免环境激活依赖）。
 # 应用配置由 pydantic Settings 从工作目录的 .env 读取；systemd 提供干净环境（无 ROS PYTHONPATH）。
 ExecStart=/home/boreas/miniconda3/envs/lr-control-api/bin/uvicorn app.main:app --host 0.0.0.0 --port 8080

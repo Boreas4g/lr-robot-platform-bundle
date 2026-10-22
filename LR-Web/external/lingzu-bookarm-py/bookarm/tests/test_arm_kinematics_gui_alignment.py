@@ -10,7 +10,12 @@ import numpy as np
 
 from bookarm.devices.arm.kinematics import PinocchioKinematics
 from bookarm.devices.arm.motion import linear_pose
+from bookarm.devices.arm.protocol import DEFAULT_JOINT_LIMITS
+from bookarm.devices.arm.service import BOOK_DEBUG_JOINT, DEFAULT_TCP_OFFSET, ZERO_JOINT
+from bookarm.application.post_vision import calculate_comfortable_center_band
+from bookarm.domain.models.book import BookTarget
 from bookarm.domain.models.pose import BasePose, JointPose
+from bookarm.domain.plans.take_book import TakeBookMotionPlan
 
 
 _URDF = Path(__file__).resolve().parents[1] / "resources" / "urdf" / "el_a3.urdf"
@@ -86,3 +91,61 @@ class KinematicsGuiAlignmentTests(unittest.TestCase):
         np.testing.assert_allclose(
             np.asarray(solution.values_rad), np.asarray(expected), atol=5e-3,
         )
+
+    def test_calibrated_pregrasp_angle_reaches_boundary_shelf_pose(self) -> None:
+        # Regression for the field failure: the 60° default did not converge
+        # at this previously tested shelf point, while the shipped take-book
+        # profile's 75° approach has a valid in-limit solution.
+        plan = TakeBookMotionPlan()
+        self.assertEqual(plan.grasp_rpy_deg, (75.0, 0.0, 90.0))
+        target = BasePose(
+            -0.362000048160553,
+            -0.3398057457260085,
+            0.18158830916335394,
+            math.radians(plan.grasp_rpy_deg[0]),
+            math.radians(plan.grasp_rpy_deg[1]),
+            math.radians(plan.grasp_rpy_deg[2]),
+        )
+
+        solution = self.kinematics.solve_ik(
+            target,
+            JointPose.from_values((
+                0.0, 0.17453292519943295, -1.1344640137963142,
+                0.8726646259971648, 0.0, 0.0,
+            )),
+            fallback_seeds=(JointPose.from_values((0.0, 0.0, 0.0, 0.0, 0.0, 0.0)),),
+        )
+
+        solved_pose = np.asarray(self.kinematics.forward_kinematics(solution).values())
+        np.testing.assert_allclose(solved_pose, np.asarray(target.values()), rtol=0.0, atol=1e-4)
+
+    def test_fine_grasp_angle_leaves_a_comfortable_center_band(self) -> None:
+        # Regression for the next field rejection: the old 95° fine-grasp
+        # default left no candidate in the 20% center window with 0.20 rad
+        # clearance, while the calibrated 80° posture leaves a continuous band.
+        point = (-0.3900000214576721, -0.33197222185073827, 0.1834536562395411)
+        target = BookTarget(
+            raw_pose=BasePose(*point, 0.0, 0.0, 0.0),
+            grasp_pose=BasePose(*point, 0.0, 0.0, 0.0),
+            pixel_uv=(575, 352),
+            frame_width_px=1280,
+            frame_height_px=720,
+            horizontal_pixel_to_base_m=(0.0, point[2] / 900.0, 0.0),
+        )
+
+        class OfflineArmProbe:
+            config = type("ArmConfig", (), {"joint_limits": DEFAULT_JOINT_LIMITS})()
+
+            def check_pose_reachable_offworker(self, pose, seed, *, label):
+                return self_kinematics.solve_ik(
+                    pose, seed, fallback_seeds=(ZERO_JOINT, BOOK_DEBUG_JOINT)
+                )
+
+        self_kinematics = self.kinematics
+        band, details = calculate_comfortable_center_band(
+            target, TakeBookMotionPlan(), OfflineArmProbe()
+        )
+
+        self.assertIsNotNone(band, details)
+        self.assertLessEqual(band[0], 0.5)
+        self.assertGreaterEqual(band[1], 0.5)

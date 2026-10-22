@@ -21,8 +21,8 @@ from pathlib import Path
 from socketserver import BaseRequestHandler, ThreadingUnixStreamServer
 
 
-DEFAULT_SCRIPT = "/home/boreas/project/LR/LR-Web/scripts/start-all.sh"
-DEFAULT_RESTART_SCRIPT = "/home/boreas/project/LR/LR-Web/scripts/restart-all.sh"
+DEFAULT_SCRIPT = "/home/boreas/lr-robot-platform-bundle/LR-Web/scripts/start-all.sh"
+DEFAULT_RESTART_SCRIPT = "/home/boreas/lr-robot-platform-bundle/LR-Web/scripts/restart-all.sh"
 MAX_REQUEST_BYTES = 8 * 1024
 MAX_OUTPUT_BYTES = 512 * 1024
 START_TIMEOUT_SECONDS = 250

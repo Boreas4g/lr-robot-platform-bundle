@@ -35,6 +35,8 @@ cd "$BOOKARM_ROOT"
 # 编译版 wheel 安装后，bookarm 包内的路径默认解析不再指向本仓库，
 # 显式导出仓库根（LR_BOOKARM_ROOT）。
 export LR_BOOKARM_ROOT="$BOOKARM_ROOT"
+PROJECT_ROOT="$(cd "$BOOKARM_ROOT/../../../.." && pwd)"
+export PYTHONPATH="$PROJECT_ROOT/drivers/aim_sdk:$BOOKARM_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 
 TOKEN_ARGS=()
 if [[ -n "${LR_BOOKARM_TOKEN:-}" ]]; then

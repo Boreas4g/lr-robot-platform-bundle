@@ -10,6 +10,8 @@
 *.pyc
 .tools/
 apps/control-api/data
+# Host-local BookSpine YOLO model (124 MB; keep out of Git's 100 MB file limit).
+external/lingzu-bookarm-py/book_spine_inference_light/weights/*.pt
 .env
 .env.*
 !.env.example
@@ -22,6 +24,7 @@ _roadhog-api-doc
 
 # production
 /dist
+/.dev-dist
 
 # misc
 .DS_Store

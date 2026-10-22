@@ -26,7 +26,10 @@ from ..schemas import User
 
 router = APIRouter(prefix="/api/v1/debug", tags=["debug"])
 
-_ROBOT_ROOT = Path(os.environ.get("LR_ROBOT_ROOT", "/home/boreas/LR/Library_robot"))
+_DEFAULT_ROBOT_ROOT = (
+    Path(__file__).resolve().parents[4] / "external" / "Library_robot"
+)
+_ROBOT_ROOT = Path(os.environ.get("LR_ROBOT_ROOT", _DEFAULT_ROBOT_ROOT))
 NAV2_PARAMS_FILE = Path(
     os.environ.get(
         "LR_NAV2_PARAMS_FILE",

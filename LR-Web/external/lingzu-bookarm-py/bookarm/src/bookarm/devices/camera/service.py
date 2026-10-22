@@ -219,6 +219,12 @@ class D435BookSpineLocator:
             polygon = tuple(
                 (float(point[0]), float(point[1])) for point in match.polygon_uv.reshape(4, 2)
             )
+            horizontal_pixel_to_camera = np.asarray(
+                (float(camera_point[2]) / float(frame.fx), 0.0, 0.0), dtype=float
+            )
+            horizontal_pixel_to_base = (
+                self._transform.matrix[:3, :3] @ horizontal_pixel_to_camera
+            )
             return BookTarget(
                 raw_pose=pose,
                 grasp_pose=pose,
@@ -228,6 +234,7 @@ class D435BookSpineLocator:
                 polygon_uv=polygon,
                 frame_width_px=int(frame.color_bgr.shape[1]),
                 frame_height_px=int(frame.color_bgr.shape[0]),
+                horizontal_pixel_to_base_m=tuple(float(value) for value in horizontal_pixel_to_base),
             )
         if self._visualization_enabled:
             self._visualize_detection(frame.color_bgr, Path(template.path), None)

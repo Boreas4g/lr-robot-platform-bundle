@@ -57,12 +57,18 @@ class TakeBookMotionPlan:
         )
     )
     pregrasp_offset_cm: Tuple[float, float, float] = (10.0, 0.0, 0.0)
-    grasp_rpy_deg: Tuple[float, float, float] = (60.0, 0.0, 90.0)
+    # Match the deployed/example take-book calibration. The previous 60°
+    # default is outside the IK workspace for a boundary shelf position that
+    # is reachable with the calibrated 75° wrist approach.
+    grasp_rpy_deg: Tuple[float, float, float] = (75.0, 0.0, 90.0)
     # Approach is the straight-line middle leg between pregrasp and the spine:
     # only the x component should be nonzero in practice.
     approach_offset_cm: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     fine_grasp_offset_cm: Tuple[float, float, float] = (1.0, 1.5, 0.0)
-    fine_grasp_rpy_deg: Tuple[float, float, float] = (95, 0.0, 90.0)
+    # Keep the final insertion wrist inside the 0.20 rad comfort margin across
+    # the calibrated horizontal shelf workspace. 95° made the center-band IK
+    # probe reject every candidate near the field-tested target.
+    fine_grasp_rpy_deg: Tuple[float, float, float] = (80.0, 0.0, 90.0)
     post_grasp_offset_cm: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     post_grasp_rpy_offset_deg: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     rod_grasp_deg: float = -70.0
@@ -89,21 +95,21 @@ class TakeBookMotionPlan:
     spine_tilt_max_deg: float = 60.0
     # 兜底识别（轴对齐矩形）无倾斜信息时是否判失败；默认放行并记日志
     spine_tilt_fail_on_unknown: bool = False
-    # 画面正中区域宽度占比（水平方向 0.40 = 正中 40% 带宽）
+    # 取书时的画面横向搜索上限；IK 舒适区计算最多使用正中 20% 候选窗口，
+    # 并依据当前书脊深度与完整抓取姿态链进一步收窄。
     align_center_band_ratio: float = 0.40
-    # Per-machine clearance beyond unchanged hard joint limits. The minimum
-    # is the normal constrained-IK margin used by arm motion commands.
+    # Optional workspace clearance beyond the unchanged mechanical joint limits.
+    # Per-machine calibration may reduce this to the normal IK margin (0.05 rad).
     align_joint_comfort_margin_rad: float = 0.20
-    # 车辆脉冲缓移速度（升降杆高位，务必缓速）
+    # 车辆对齐低速由车端配置；该字段保留旧 profile 兼容。
     align_pulse_speed_mps: float = 0.03
-    # 单次对齐脉冲的移动距离（cm）：每次脉冲固定移动该距离后重新识别，
-    # 直至进入正中带宽；调参页以 cm 调整
-    align_step_cm: float = 0.6
-    # 遗留字段：比例式脉冲（偏差像素→毫米增益）已被 align_step_cm 定长脉冲
-    # 取代，仅为兼容旧 profile 保留，不再参与计算
+    # 旧调参字段，仅为读取历史 profile 保留；运行时使用外参估算距离，
+    # 每次最多 20 cm（车端定距接口的硬上限）。
+    align_step_cm: float = 20.0
+    # 旧版像素距离增益，保留 profile 兼容；运行时距离由相机外参映射计算。
     align_px_to_mm: float = 0.5
     align_pulse_min_ms: int = 100
-    align_pulse_max_ms: int = 400
+    align_pulse_max_ms: int = 500
     # 每次脉冲后的稳定等待
     align_settle_ms: int = 600
     align_max_moves: int = 8

@@ -11,7 +11,7 @@ User=boreas
 Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 Environment=MAPPING_AGENT_HOST=127.0.0.1
 Environment=MAPPING_AGENT_PORT=18090
-ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/boreas/LR/Library_robot/install/setup.bash && exec /usr/bin/python3 /home/boreas/LR/Library_robot/scripts/mapping_agent.py'
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/boreas/lr-robot-platform-bundle/LR-Web/external/Library_robot/install/setup.bash && exec /usr/bin/python3 /home/boreas/lr-robot-platform-bundle/LR-Web/external/Library_robot/scripts/mapping_agent.py'
 Restart=always
 RestartSec=3
 TimeoutStopSec=10

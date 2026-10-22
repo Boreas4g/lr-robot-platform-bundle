@@ -6,10 +6,10 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/home/boreas/project/LR/LR-Web
+WorkingDirectory=/home/boreas/lr-robot-platform-bundle/LR-Web
 EnvironmentFile=-/etc/lr-platform/platform.env
-ExecStart=/home/boreas/project/LR/LR-Web/scripts/start-platform.sh
-ExecStop=/home/boreas/project/LR/LR-Web/scripts/stop-platform.sh
+ExecStart=/home/boreas/lr-robot-platform-bundle/LR-Web/scripts/start-platform.sh
+ExecStop=/home/boreas/lr-robot-platform-bundle/LR-Web/scripts/stop-platform.sh
 RemainAfterExit=yes
 TimeoutStartSec=0
 

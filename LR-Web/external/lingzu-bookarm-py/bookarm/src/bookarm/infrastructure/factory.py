@@ -26,6 +26,7 @@ from bookarm.infrastructure.config.profiles import (
     load_return_book_motion_plan,
     load_take_book_motion_plan,
 )
+from bookarm.infrastructure.vehicle_align import VehicleAlignClient
 from bookarm.runtime.bookarm_runtime import BookArmRuntime
 from bookarm.runtime.reservation import RuntimeReservation
 
@@ -64,6 +65,7 @@ def create_bookarm_runtime(
     lift = AimLiftService(lift_config or LiftDeviceConfig())
     rod = RodMotorService(rod_config or RodDeviceConfig())
     reservation = RuntimeReservation()
+    vehicle_align = VehicleAlignClient()
     sdk = BookArmSDK(
         task_manager=manager,
         take_book=TakeBookUseCase(
@@ -81,6 +83,7 @@ def create_bookarm_runtime(
             plan=plan,
             grasp_step_approval=grasp_step_approval,
             grasp_step_reporter=grasp_step_reporter,
+            vehicle_align=vehicle_align,
         ),
         return_book=ReturnBookUseCase(
             task_manager=manager,
@@ -90,6 +93,7 @@ def create_bookarm_runtime(
             arm=arm,
             rod=rod,
             pickup_slots={},
+            vehicle_align=vehicle_align,
         ),
         return_book_to_end=ReturnBookToEndUseCase(manager),
     )
@@ -97,6 +101,7 @@ def create_bookarm_runtime(
         TakeBookStage.LIFT_MOVE: (lift,),
         TakeBookStage.VISION_TARGET: (lift, camera),
         TakeBookStage.ARM_DEBUG_POSE: (lift, camera, arm),
+        TakeBookStage.POST_VISION_ALIGN: (lift, camera, arm),
         TakeBookStage.BOOK_GRASP: (lift, camera, arm, rod),
         TakeBookStage.BOOK_STAND_PLACE: (lift, camera, arm, rod),
         TakeBookStage.ARM_STANDBY: (arm, camera, lift, rod),
@@ -140,6 +145,7 @@ def create_return_book_runtime(
     # This rod service is not started by a return-book runtime.
     rod = RodMotorService(rod_config or RodDeviceConfig())
     reservation = RuntimeReservation()
+    vehicle_align = VehicleAlignClient()
     take = TakeBookUseCase(
         task_manager=manager,
         reservation=reservation,
@@ -148,6 +154,7 @@ def create_return_book_runtime(
         arm=arm,
         rod=rod,
         slots={},
+        vehicle_align=vehicle_align,
     )
     sdk = BookArmSDK(
         task_manager=manager,
@@ -171,6 +178,7 @@ def create_return_book_runtime(
                 else {}
             ),
             plan=plan,
+            vehicle_align=vehicle_align,
         ),
         return_book_to_end=ReturnBookToEndUseCase(manager),
     )
@@ -178,6 +186,7 @@ def create_return_book_runtime(
         ReturnBookStage.LIFT_MOVE: (lift,),
         ReturnBookStage.ARM_DEBUG_POSE: (lift, arm, rod),
         ReturnBookStage.VISION_RETARGET: (lift, arm, rod, camera),
+        ReturnBookStage.POST_VISION_ALIGN: (lift, arm, rod, camera),
         ReturnBookStage.BOOK_STAND_PICKUP: (lift, arm, rod, camera),
         ReturnBookStage.INSERT_TARGET: (lift, arm, rod, camera),
         ReturnBookStage.REACHABILITY_CHECK: (lift, arm, rod, camera),

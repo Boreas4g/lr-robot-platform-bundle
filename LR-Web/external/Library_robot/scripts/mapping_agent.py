@@ -49,7 +49,7 @@
 
 安装步骤（本代理以 boreas 运行，与两个 ROS 栈同用户，避免跨用户 DDS
 共享内存传输问题；systemctl 与地图注册通过 boreas 的免密 sudo 执行）：
-  1. 本文件位于 /home/boreas/LR/Library_robot/scripts/mapping_agent.py。
+  1. 本文件位于 /home/boreas/lr-robot-platform-bundle/LR-Web/external/Library_robot/scripts/mapping_agent.py。
   2. 安装两个 systemd 单元（源文件在 scripts/systemd/ 目录）：
        sudo install -m 0644 scripts/systemd/lr-robot-mapping.service \
                             scripts/systemd/lr-robot-mapping-agent.service \
@@ -113,7 +113,7 @@ except ImportError as error:  # ROS 环境未 source 时直接失败，由 syste
 
 RUNTIME_UNIT = "lr-robot-runtime.service"
 MAPPING_UNIT = "lr-robot-mapping.service"
-REGISTER_SCRIPT = "/home/boreas/LR/Library_robot/scripts/register-robot-map.sh"
+REGISTER_SCRIPT = str(Path(__file__).resolve().with_name("register-robot-map.sh"))
 MAP_STORAGE_ROOT = Path("/var/lib/lr-robot/maps")
 MARKS_FILE = Path(os.environ.get("MAPPING_AGENT_MARKS_FILE", "/var/lib/lr-robot/mapping-marks.json"))
 

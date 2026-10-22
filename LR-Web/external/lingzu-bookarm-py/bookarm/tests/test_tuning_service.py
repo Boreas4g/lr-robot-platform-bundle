@@ -72,8 +72,8 @@ class TuningServiceTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         profile = response.json()
-        self.assertEqual(profile["grasp_rpy_deg"], [60.0, 0.0, 90.0])
-        self.assertEqual(profile["fine_grasp_rpy_deg"], [95.0, 0.0, 90.0])
+        self.assertEqual(profile["grasp_rpy_deg"], [75.0, 0.0, 90.0])
+        self.assertEqual(profile["fine_grasp_rpy_deg"], [80.0, 0.0, 90.0])
         self.assertEqual(len(profile["zero_joint"]), 6)
         self.assertEqual(len(profile["debug_joint"]), 6)
         self.assertEqual(profile["rod_grasp_deg"], -70.0)
@@ -114,7 +114,7 @@ class TuningServiceTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         current = self.client.get("%s/take/profile" % TUNING_URL).json()
         self.assertEqual(current["fine_grasp_rpy_deg"], [80.0, 0.0, 90.0])
-        self.assertEqual(current["grasp_rpy_deg"], [60.0, 0.0, 90.0])
+        self.assertEqual(current["grasp_rpy_deg"], [75.0, 0.0, 90.0])
         self.assertEqual(current["gripper"]["effort"], 0.7)
         self.assertEqual(current["gripper"]["open_deg"], 30.0)
         # The live plan the fake runner holds is hot-swapped, not copied.
@@ -156,7 +156,7 @@ class TuningServiceTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
         self.assertIn("unknown fields", response.json()["detail"])
-        self.assertEqual(self.runner.take_plan.fine_grasp_rpy_deg, (95, 0.0, 90.0))
+        self.assertEqual(self.runner.take_plan.fine_grasp_rpy_deg, (80.0, 0.0, 90.0))
         self.assertFalse((self.tuning_dir / "take_profile.json").exists())
 
         bad_gripper = self.client.put(
@@ -218,7 +218,7 @@ class TuningServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 422)
-        self.assertEqual(self.runner.take_plan.fine_grasp_rpy_deg, (95, 0.0, 90.0))
+        self.assertEqual(self.runner.take_plan.fine_grasp_rpy_deg, (80.0, 0.0, 90.0))
         self.assertFalse((self.tuning_dir / "take_profile.json").exists())
 
     def test_step_preview_reports_debug_joints_without_prepare(self):
