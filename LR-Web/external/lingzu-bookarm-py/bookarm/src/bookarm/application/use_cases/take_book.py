@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, Optional
 
 from bookarm.api.requests import TakeBookRequest, TakeBookStage
 from bookarm.api.results import WorkflowResult, WorkflowTask
-from bookarm.application.post_vision import post_vision_check_align
+from bookarm.application.post_vision import post_vision_check_align, take_book_grasp_poses
 from bookarm.application.task_manager import TaskManager
 from bookarm.application.workflow_engine import WorkflowCancelled, WorkflowEngine
 from bookarm.domain.models.book import BookTarget
@@ -82,12 +82,12 @@ class TakeBookUseCase:
             steps = (
                 ("lift_move", lambda: self._move_lift(request), False),
                 ("vision_target", lambda: self._acquire_target(request, context), False),
+                ("arm_debug_pose", self._prepare_arm_for_grasp, True),
                 (
                     "post_vision_align",
                     lambda: self._post_vision_align(task, request, context),
                     False,
                 ),
-                ("arm_debug_pose", self._prepare_arm_for_grasp, True),
                 (
                     "reachability_check",
                     lambda: self._check_reachability(context, placement),
@@ -142,6 +142,10 @@ class TakeBookUseCase:
         return {
             "book_target_raw_base_pose": target.raw_pose.values(),
             "book_target_grasp_base_pose": target.grasp_pose.values(),
+            "grasp_chain_poses": {
+                label: pose.values()
+                for label, pose in self._grasp_poses(target).items()
+            },
             "capture_id": target.capture_id,
             "confidence": target.confidence,
         }
@@ -158,6 +162,7 @@ class TakeBookUseCase:
             "target",
             self.vehicle_align,
             self.plan,
+            arm=self.arm,
             engine=self.engine,
             task=task,
         )
@@ -196,18 +201,7 @@ class TakeBookUseCase:
 
     def _grasp_poses(self, target: BookTarget) -> Dict[str, BasePose]:
         """Grasp-chain poses in motion order, shared with the reachability precheck."""
-
-        plan = self.plan
-        grasp_pose = target.grasp_pose
-        fine_grasp = grasp_pose.offset_cm(plan.fine_grasp_offset_cm, rpy_deg=plan.fine_grasp_rpy_deg)
-        return {
-            "arm_pregrasp": grasp_pose.offset_cm(plan.pregrasp_offset_cm, rpy_deg=plan.grasp_rpy_deg),
-            "arm_approach": grasp_pose.offset_cm(plan.approach_offset_cm, rpy_deg=plan.grasp_rpy_deg),
-            "arm_fine_grasp": fine_grasp,
-            "arm_post_grasp": fine_grasp.offset_cm(
-                plan.post_grasp_offset_cm, rpy_offset_deg=plan.post_grasp_rpy_offset_deg
-            ),
-        }
+        return take_book_grasp_poses(target, self.plan)
 
     def _check_reachability(
         self, context: Dict[str, Any], placement: Optional[SlotPlacementPlan]
