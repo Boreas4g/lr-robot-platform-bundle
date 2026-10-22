@@ -91,6 +91,9 @@ class TakeBookMotionPlan:
     spine_tilt_fail_on_unknown: bool = False
     # 画面正中区域宽度占比（水平方向 0.40 = 正中 40% 带宽）
     align_center_band_ratio: float = 0.40
+    # Per-machine clearance beyond unchanged hard joint limits. The minimum
+    # is the normal constrained-IK margin used by arm motion commands.
+    align_joint_comfort_margin_rad: float = 0.20
     # 车辆脉冲缓移速度（升降杆高位，务必缓速）
     align_pulse_speed_mps: float = 0.03
     # 单次对齐脉冲的移动距离（cm）：每次脉冲固定移动该距离后重新识别，

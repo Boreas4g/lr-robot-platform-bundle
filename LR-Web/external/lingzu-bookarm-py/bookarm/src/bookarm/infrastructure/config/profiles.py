@@ -200,6 +200,9 @@ def _validate_post_vision_fields(values: Mapping[str, Any]) -> None:
     band = float(values.get("align_center_band_ratio", 0.40))
     if not math.isfinite(band) or not 0.05 <= band <= 0.9:
         raise ValueError("align_center_band_ratio must be within 0.05..0.9")
+    margin = float(values.get("align_joint_comfort_margin_rad", 0.20))
+    if not math.isfinite(margin) or not 0.05 <= margin <= 0.20:
+        raise ValueError("align_joint_comfort_margin_rad must be within 0.05..0.20 rad")
     speed = float(values.get("align_pulse_speed_mps", 0.03))
     if not math.isfinite(speed) or not 0.005 <= speed <= 0.08:
         raise ValueError("align_pulse_speed_mps must be within 0.005..0.08 m/s")

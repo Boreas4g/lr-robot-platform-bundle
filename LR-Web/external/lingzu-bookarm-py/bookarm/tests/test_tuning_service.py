@@ -126,6 +126,31 @@ class TuningServiceTests(unittest.TestCase):
         self.assertEqual(reloaded.fine_grasp_rpy_deg, (80.0, 0.0, 90.0))
         self.assertEqual(reloaded.gripper.effort, 0.7)
 
+    def test_put_take_profile_accepts_minimum_ik_clearance_and_keeps_90_degree_pose(self):
+        response = self.client.put(
+            "%s/take/profile" % TUNING_URL,
+            json={
+                "fine_grasp_rpy_deg": [90.0, 0.0, 90.0],
+                "align_joint_comfort_margin_rad": 0.05,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["fine_grasp_rpy_deg"], [90.0, 0.0, 90.0])
+        self.assertEqual(response.json()["align_joint_comfort_margin_rad"], 0.05)
+        reloaded = load_take_book_motion_plan(self.tuning_dir / "take_profile.json")
+        self.assertEqual(reloaded.fine_grasp_rpy_deg, (90.0, 0.0, 90.0))
+        self.assertEqual(reloaded.align_joint_comfort_margin_rad, 0.05)
+
+    def test_put_take_profile_rejects_clearance_below_ik_margin(self):
+        response = self.client.put(
+            "%s/take/profile" % TUNING_URL,
+            json={"align_joint_comfort_margin_rad": 0.049},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertFalse((self.tuning_dir / "take_profile.json").exists())
+
     def test_put_unknown_field_is_rejected(self):
         response = self.client.put("%s/take/profile" % TUNING_URL, json={"bogus_field": 1})
 

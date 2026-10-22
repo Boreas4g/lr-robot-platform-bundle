@@ -36,7 +36,7 @@ def offline_arm():
     )
 
 
-def field_plan(angle):
+def field_plan(angle, margin=0.20):
     # Explicit incident settings, independent of mutable on-machine profiles.
     return replace(
         TakeBookMotionPlan(), grasp_rpy_deg=(75.0, 10.0, 90.0),
@@ -44,6 +44,7 @@ def field_plan(angle):
         fine_grasp_rpy_deg=(angle, 0.0, 90.0),
         post_grasp_offset_cm=(15.0, 0.0, 8.0),
         post_grasp_rpy_offset_deg=(0.0, 0.0, 0.0),
+        align_joint_comfort_margin_rad=margin,
     )
 
 
@@ -74,6 +75,15 @@ def test_calibrated_profile_passes_exact_failed_target(offline_arm):
     assert comfortable, error
 
 
+def test_90_degree_field_profile_passes_with_configured_005_rad_clearance(offline_arm):
+    band, details = calculate_comfortable_center_band(
+        target_at(), field_plan(90, margin=0.05), offline_arm
+    )
+    assert band is not None, details
+    assert details["joint_comfort_margin_rad"] == 0.05
+    assert details["reachable_sample_count"] >= 10
+
+
 @pytest.mark.parametrize("dx", [-0.005, 0.0, 0.005])
 @pytest.mark.parametrize("dz", [-0.003, 0.0, 0.003])
 def test_calibrated_profile_retains_band_under_small_measurement_changes(offline_arm, dx, dz):
@@ -84,6 +94,18 @@ def test_calibrated_profile_retains_band_under_small_measurement_changes(offline
     assert band is not None, details
     assert band[1] - band[0] > 0.01
     assert details["joint_comfort_margin_rad"] == 0.20
+
+
+@pytest.mark.parametrize("dx", [-0.005, 0.0, 0.005])
+@pytest.mark.parametrize("dz", [-0.003, 0.0, 0.003])
+def test_90_degree_profile_retains_band_under_small_measurement_changes(offline_arm, dx, dz):
+    band, details = calculate_comfortable_center_band(
+        target_at(-0.39700005054473875 + dx, 0.18722332502539107 + dz),
+        field_plan(90, margin=0.05), offline_arm,
+    )
+    assert band is not None, details
+    assert band[1] - band[0] > 0.01
+    assert details["joint_comfort_margin_rad"] == 0.05
 
 
 def test_clearance_error_identifies_limiting_joint_and_actual_margin():

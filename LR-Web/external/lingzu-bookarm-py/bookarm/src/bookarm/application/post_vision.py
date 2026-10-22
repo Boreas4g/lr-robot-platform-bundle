@@ -138,7 +138,16 @@ def _target_at_horizontal_ratio(target: BookTarget, ratio: float) -> Optional[Bo
     return replace(target, raw_pose=shifted(target.raw_pose), grasp_pose=shifted(target.grasp_pose))
 
 
-def _joint_clearance_error(arm: Any, joints: Any) -> Optional[str]:
+def _comfort_margin_rad(plan: Any) -> float:
+    margin = float(getattr(plan, "align_joint_comfort_margin_rad", IK_JOINT_COMFORT_MARGIN_RAD))
+    if not math.isfinite(margin) or not 0.05 <= margin <= 0.20:
+        raise RuntimeError("align_joint_comfort_margin_rad must be within 0.05..0.20 rad")
+    return margin
+
+
+def _joint_clearance_error(
+    arm: Any, joints: Any, margin_rad: float = IK_JOINT_COMFORT_MARGIN_RAD
+) -> Optional[str]:
     limits = getattr(getattr(arm, "config", None), "joint_limits", None)
     # Hardware-free test doubles may only model the IK port. The production
     # ArmService always has limits, so only it can claim the comfort margin.
@@ -156,9 +165,9 @@ def _joint_clearance_error(arm: Any, joints: Any) -> Optional[str]:
             return "第 %d 关节角或限位不是有限数值" % joint_id
         clearances.append((min(float(value) - lower, upper - float(value)), joint_id))
     clearance, joint_id = min(clearances)
-    if clearance < IK_JOINT_COMFORT_MARGIN_RAD:
+    if clearance < margin_rad:
         return "第 %d 关节距限位余量 %.3f rad，不足 %.2f rad" % (
-            joint_id, clearance, IK_JOINT_COMFORT_MARGIN_RAD
+            joint_id, clearance, margin_rad
         )
     return None
 
@@ -173,7 +182,7 @@ def _take_book_chain_is_comfortable(
     try:
         for label, pose in take_book_grasp_poses(target, plan).items():
             seed = check(pose, seed, label=label)
-            clearance_error = _joint_clearance_error(arm, seed)
+            clearance_error = _joint_clearance_error(arm, seed, _comfort_margin_rad(plan))
             if clearance_error is not None:
                 return False, "姿态 %s：%s" % (label, clearance_error)
     except (RuntimeError, ValueError) as error:
@@ -259,7 +268,7 @@ def calculate_comfortable_center_band(
         "detail": "按整条取书 IK 姿态链及关节余量计算",
         "sample_count": count,
         "reachable_sample_count": sum(reachable),
-        "joint_comfort_margin_rad": IK_JOINT_COMFORT_MARGIN_RAD,
+        "joint_comfort_margin_rad": _comfort_margin_rad(plan),
     }
 
 
