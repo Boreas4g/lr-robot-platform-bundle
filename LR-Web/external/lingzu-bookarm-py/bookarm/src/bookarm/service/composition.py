@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -57,28 +58,43 @@ class CombinedRuntime:
     vehicle: "VehicleAlignClient" 
 
 
-def _load_lift_config() -> LiftDeviceConfig:
-    """Load the lift device config from config/devices/lift.json when present."""
-
-    path = Path(__file__).resolve().parents[3] / "config" / "devices" / "lift.json"
+def _load_device_config(name: str, default):
+    """Allow an appliance to keep per-robot hardware configuration outside code."""
+    directory = Path(os.environ.get("LR_BOOKARM_CONFIG_DIR") or
+                     Path(__file__).resolve().parents[3] / "config")
+    path = directory / "devices" / f"{name}.json"
     if not path.is_file():
-        return LiftDeviceConfig()
+        if os.environ.get("LR_BOOKARM_CONFIG_DIR"):
+            raise ValueError(f"Missing appliance device configuration: {path}")
+        return default
     payload = json.loads(path.read_text(encoding="utf-8"))
-    allowed = {field.name for field in LiftDeviceConfig.__dataclass_fields__.values()}
-    values = {key: value for key, value in payload.items() if key in allowed}
-    return replace(LiftDeviceConfig(), **values)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Device configuration must be an object: {path}")
+    allowed = set(default.__dataclass_fields__)
+    unknown = set(payload) - allowed
+    if unknown:
+        raise ValueError(f"Unknown {name} configuration fields: {sorted(unknown)}")
+    values = dict(payload)
+    for key, value in values.items():
+        current = getattr(default, key)
+        if isinstance(current, dict):
+            values[key] = {int(k): tuple(v) if isinstance(v, list) else v
+                           for k, v in value.items()}
+        elif isinstance(current, Path) or key.endswith("_path"):
+            values[key] = Path(value) if value is not None else None
+        elif isinstance(current, tuple):
+            values[key] = tuple(value)
+    return replace(default, **values)
+
+
+def _load_lift_config() -> LiftDeviceConfig:
+    return _load_device_config("lift", LiftDeviceConfig())
 
 
 def _load_camera_config() -> D435BookSpineLocatorConfig:
     """Load the camera device config from config/devices/camera.json when present."""
 
-    path = Path(__file__).resolve().parents[3] / "config" / "devices" / "camera.json"
-    if not path.is_file():
-        return D435BookSpineLocatorConfig()
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    allowed = {field.name for field in D435BookSpineLocatorConfig.__dataclass_fields__.values()}
-    values = {key: value for key, value in payload.items() if key in allowed}
-    return replace(D435BookSpineLocatorConfig(), **values)
+    return _load_device_config("camera", D435BookSpineLocatorConfig())
 
 
 def create_combined_runtime(
@@ -125,7 +141,8 @@ def create_combined_runtime(
         mid_return_plan = MidReturnMotionPlan()
     else:
         mid_return_plan = load_mid_return_motion_plan(Path(mid_return_profile_path))
-    arm_config = ArmDeviceConfig()
+    arm_config = (_load_device_config("arm", ArmDeviceConfig())
+                  if os.environ.get("LR_BOOKARM_CONFIG_DIR") else ArmDeviceConfig())
     if arm_feedback_max_age_s is not None:
         # Loaded mini-PCs occasionally stall the feedback keepalive for a few
         # hundred milliseconds; joint 1 is requested first in every Type-24
@@ -171,7 +188,9 @@ def create_combined_runtime(
         )
     )
     lift = AimLiftService(_load_lift_config())
-    rod = RodMotorService(RodDeviceConfig())
+    rod_config = (_load_device_config("rod", RodDeviceConfig())
+                  if os.environ.get("LR_BOOKARM_CONFIG_DIR") else RodDeviceConfig())
+    rod = RodMotorService(rod_config)
     reservation = RuntimeReservation()
     vehicle_align = VehicleAlignClient()
     pickup_slots = load_book_stand_pickup_slots(Path(book_stand_pickup_slots_path))

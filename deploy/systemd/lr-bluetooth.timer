@@ -1,0 +1,10 @@
+[Unit]
+Description=Keep library robot Bluetooth enabled
+
+[Timer]
+OnBootSec=10
+OnUnitActiveSec=30
+Unit=lr-bluetooth.service
+
+[Install]
+WantedBy=timers.target

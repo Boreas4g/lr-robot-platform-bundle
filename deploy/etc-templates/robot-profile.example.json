@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "robot_id": "LR-02",
+  "robot_name": "图书馆机器人",
+  "service_user": "robot",
+  "baseline": "./migration-baseline",
+  "camera_serial": "REPLACE_CAMERA_SERIAL",
+  "devices": {
+    "laser_port": { "vid": "1a86", "pid": "55d4", "serial": "REPLACE_FRONT_LIDAR_SERIAL", "id_path": "" },
+    "laser_back": { "vid": "1a86", "pid": "55d4", "serial": "REPLACE_REAR_LIDAR_SERIAL", "id_path": "" },
+    "chassis_serial_port": { "vid": "1a86", "pid": "55d3", "serial": "REPLACE_CHASSIS_SERIAL", "id_path": "" },
+    "imu_port": { "vid": "1a86", "pid": "7523", "serial": "", "id_path": "REPLACE_TARGET_USB_PHYSICAL_PATH" },
+    "lift_port": { "vid": "REPLACE", "pid": "REPLACE", "serial": "REPLACE_LIFT_SERIAL", "id_path": "" },
+    "rodmotor": { "vid": "REPLACE", "pid": "REPLACE", "serial": "REPLACE_ROD_SERIAL", "id_path": "" }
+  },
+  "camera": {},
+  "arm": {},
+  "lift": {},
+  "rod": {},
+  "battery": { "serial": "", "capacity_ah": null, "nominal_voltage_v": null },
+  "hotspot": {
+    "enabled": true,
+    "interface": "",
+    "mac": "",
+    "ssid": "图书馆机器人",
+    "password": "12345678",
+    "address": "192.168.4.1/24",
+    "channel": 6
+  },
+  "bluetooth_name": "图书馆机器人",
+  "operator_password": "123456",
+  "active_map_id": "REPLACE_APPROVED_MAP_ID",
+  "hardware_autostart": true,
+  "calibration_reviewed": false,
+  "map_site_reviewed": false,
+  "site_start_confirmed": false
+}

@@ -1,0 +1,8 @@
+[Unit]
+Description=Library robot Bluetooth name and discoverability
+Wants=bluetooth.service
+After=bluetooth.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /home/boreas/lr-robot-platform-bundle/deploy/scripts/robot-bluetooth.sh

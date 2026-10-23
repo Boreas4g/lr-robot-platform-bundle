@@ -7,4 +7,7 @@ __pycache__/
 *.pyc
 *.py[cod]
 .venv/
+/.venv-api/
+/.venv-bookarm/
+/LR-Web/external/Library_robot/.setup-previous-*/
 *.egg-info/

@@ -173,7 +173,8 @@ JOG_DURATION_MIN_S = 0.5
 JOG_DURATION_MAX_S = 10.0
 
 # Camera calibration override file, next to the packaged example.
-_CONFIG_CALIBRATION_DIR = Path(__file__).resolve().parents[3] / "config" / "calibration"
+_CONFIG_CALIBRATION_DIR = Path(os.environ.get("LR_BOOKARM_CONFIG_DIR") or
+                               Path(__file__).resolve().parents[3] / "config") / "calibration"
 DEFAULT_CAMERA_TRANSFORM_PATH = _CONFIG_CALIBRATION_DIR / "camera_to_base.json"
 DEFAULT_CAMERA_TRANSFORM_EXAMPLE_PATH = _CONFIG_CALIBRATION_DIR / "camera_to_base.example.json"
 
