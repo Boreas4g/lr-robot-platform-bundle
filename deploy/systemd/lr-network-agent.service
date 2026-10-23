@@ -1,0 +1,24 @@
+[Unit]
+Description=LR controlled NetworkManager Wi-Fi agent
+After=NetworkManager.service
+Wants=NetworkManager.service avahi-daemon.service
+
+[Service]
+Type=simple
+User=root
+Group=boreas
+ExecStart=/usr/bin/python3 /usr/local/libexec/lr-network-agent.py
+RuntimeDirectory=lr-network-agent
+RuntimeDirectoryMode=0750
+UMask=0077
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/run/lr-network-agent
+
+[Install]
+WantedBy=multi-user.target

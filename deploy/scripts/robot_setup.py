@@ -30,7 +30,7 @@ ROS = WEB / "external/Library_robot"
 ARM = WEB / "external/lingzu-bookarm-py/bookarm"
 ROLES = ("laser_port", "laser_back", "chassis_serial_port", "imu_port", "lift_port", "rodmotor")
 CORE = ["lr-platform.service", "lr-control-api.service", "lr-web-static.service",
-        "lr-host-start-agent.service", "lr-robot-mapping-agent.service", "lr-xt369-usb.service"]
+        "lr-host-start-agent.service", "lr-network-agent.service", "lr-robot-mapping-agent.service", "lr-xt369-usb.service"]
 HARDWARE = ["lr-bookarm-can.service", "lr-bookarm-takeout.service", "lr-robot-runtime.service"]
 RETIRED = ["lr-web-dev.service", "lr-bookarm-runtime.service", "lr-xt369p-battery.service",
            "lr-xt369p-rfcomm.service", "lr-robot-map-sync.timer", "lr-hotspot.service",
@@ -693,6 +693,7 @@ def apply_profile(p, profile_path, *, install_deps, start):
            "LR_MAP_STORAGE_DIR": "/var/lib/lr-platform/maps", "LR_BATTERY_STATE_FILE": "/var/lib/lr-platform/battery/state.sqlite3",
            "LR_BATTERY_ROBOT_ID": p["robot_id"], "LR_ROBOT_AGENT_URL": "http://127.0.0.1:18090",
            "LR_HOST_START_AGENT_SOCKET": "/var/lib/lr-platform/host-start-agent/start-all.sock",
+           "LR_NETWORK_AGENT_SOCKET": "/run/lr-network-agent/network.sock",
            "LR_BOOKARM_SOCKET_PATH": "/run/lr-bookarm/bookarm.sock", "LR_BOOKARM_TOKEN": private["bookarm"],
            "LR_ROBOT_ROOT": str(ROS), "LR_REGISTER_ROBOT_MAP_SCRIPT": str(ROS / "scripts/register-robot-map.sh")}
     install("/etc/lr-platform/control-api.env", env_text(api))
@@ -798,6 +799,9 @@ def apply_profile(p, profile_path, *, install_deps, start):
     for unit in ["lr-robot-mapping.service"] + ([] if p["hardware_autostart"] else HARDWARE):
         run(["systemctl", "disable", unit], check=False, capture=True)
     run(["systemctl", "enable", *enabled_units(p)], capture=True)
+    hostname = re.sub(r"[^a-z0-9-]+", "-", p["robot_id"].lower()).strip("-")[:58]
+    run(["hostnamectl", "set-hostname", "lr-" + hostname], capture=True)
+    run(["systemctl", "enable", "avahi-daemon.service"], capture=True)
     run(["udevadm", "control", "--reload-rules"])
     # Do not trigger devices, reload NM connections, rfkill Wi-Fi, restart networking or reboot.
     provision = ROOT / "deploy/scripts/robot_provision.py"
@@ -864,6 +868,26 @@ def check(p):
         except Exception:
             print("FAIL " + url)
             failures.append(url)
+    network = None
+    try:
+        import http.client
+        import socket
+        connection = http.client.HTTPConnection("localhost", timeout=10)
+        connection.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection.sock.settimeout(10)
+        try:
+            connection.sock.connect("/run/lr-network-agent/network.sock")
+            connection.request("GET", "/status")
+            response = connection.getresponse()
+            network = json.loads(response.read())
+            good = response.status == 200 and bool(network.get("local_url"))
+        finally:
+            connection.close()
+    except Exception:
+        good = False
+    print(f"{'OK' if good else 'FAIL'} 网络代理与 Avahi 名称入口（只读）")
+    if not good:
+        failures.append("network-agent")
     if p["hardware_autostart"]:
         for role in ROLES:
             exists = Path("/dev", role).exists()
@@ -914,10 +938,12 @@ def check(p):
     if not good:
         failures.append("battery-data")
     if p["hotspot"]["enabled"]:
-        addresses = run(["ip", "-j", "-4", "addr", "show", "dev", p["hotspot"]["interface"]], capture=True, check=False)
-        good = addresses.returncode == 0 and any(a.get("local") == "192.168.4.1" and a.get("prefixlen") == 24
-                 for item in json.loads(addresses.stdout or "[]") for a in item.get("addr_info", []))
-        print(f"{'OK' if good else 'FAIL'} 热点固定地址 192.168.4.1/24（安装后首次开机生效）")
+        device = next((d for d in (network or {}).get("devices", [])
+                       if d["interface"] == p["hotspot"]["interface"]), {})
+        good = bool(device.get("hotspots")) and (
+            (device.get("mode") == "ap" and "192.168.4.1" in device.get("addresses", [])) or
+            (device.get("mode") == "infrastructure" and bool(device.get("addresses"))))
+        print(f"{'OK' if good else 'FAIL'} 固定热点配置与当前热点/Wi-Fi IPv4 连接")
         if not good:
             failures.append("hotspot")
     bluetooth = run(["bluetoothctl", "show"], capture=True, check=False)

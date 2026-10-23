@@ -128,6 +128,12 @@ export default [
     prerender: false,
     routes: [
       {
+        path: '/system/network',
+        name: '网络连接',
+        icon: 'wifi',
+        component: './system/network',
+      },
+      {
         path: '/overview/robots',
         name: '机器人管理',
         icon: 'robot',

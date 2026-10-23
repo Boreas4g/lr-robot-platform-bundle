@@ -24,6 +24,11 @@ test('private arm proxy verifies each browser session before forwarding', async 
   });
   const api = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
+    if (url.pathname === '/api/v1/system/network/confirm') {
+      assert.match(req.headers['x-lr-local-address'], /^(::ffff:)?127\.0\.0\.1$/);
+      res.end('{}');
+      return;
+    }
     assert.equal(url.pathname, '/api/v1/auth/bookarm-access');
     assert.equal(url.searchParams.get('method'), 'GET');
     if (req.headers.authorization !== 'Bearer public-test-session') res.statusCode = 401;
@@ -46,6 +51,11 @@ test('private arm proxy verifies each browser session before forwarding', async 
     await Promise.all([new Promise((resolve) => arm.close(resolve)), new Promise((resolve) => api.close(resolve))]);
   });
   await once(server.stdout, 'data');
+  // Clients cannot spoof the target network address used for confirmation.
+  const confirm = await fetch(`http://127.0.0.1:${webPort}/api/v1/system/network/confirm`, {
+    method: 'POST', headers: { 'X-LR-Local-Address': '192.168.4.1' }, body: '{}',
+  });
+  assert.equal(confirm.status, 200);
   const base = `http://127.0.0.1:${webPort}/bookarm-api`;
   assert.equal((await fetch(`${base}/v1/studio/library`)).status, 401);
   assert.equal(forwarded, 0);

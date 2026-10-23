@@ -21,6 +21,7 @@
 | XT369 USB 电量计 | 是否接入、USB 权限；多个电量计时指定序列号；电池容量和标称电压 | `battery.serial/capacity_ah/nominal_voltage_v`；生成 udev 权限及采集服务；电池状态在 `/var/lib/lr-platform/battery/` |
 | 地图与定位 | 地图是否属于**实际现场**，有效 ID/边界、分辨率、原点；新机初始定位 | `active_map_id`；基线地图注册表、PGM/YAML、自动定位参数；不复制旧机的实时姿态和上次定位结果 |
 | 热点 | 新电脑无线网卡名/MAC、AP 模式能力、SSID、密码、信道 | `hotspot.*`；`/etc/NetworkManager/system-connections/lr-robot-hotspot.nmconnection`；固定 `192.168.4.1/24`，共享模式提供 DHCP |
+| 局域网 Wi-Fi | 现场 SSID、密码、允许设备互访；可选 DHCP 地址保留 | 安装后通过“系统 → 网络连接”配置，不复制旧机 Wi-Fi 密码；Avahi 提供页面显示的 `.local` 名称 |
 | 蓝牙 | 适配器能否使用、对外名称 | `bluetooth_name`；`/etc/lr-platform/bluetooth.env`；timer 每 30 秒维持开启和可发现 |
 | 网站登录和权限 | 用户密码、维护账号；对外入口 | `operator_password`；操作员仅开放**作业、地图与导航、系统**；维护管理员独立随机密码；入口统一 `8000`，不用 `8001` |
 | 软件环境 | Ubuntu/CPU 架构、ROS、Node、Python 包、npm 锁、Docker 镜像 | 基线 `versions/*`；独立 Python venv；前端和 ROS 在新电脑重新构建 |
@@ -49,6 +50,7 @@
 | `lr-robot-runtime.service` | ROS 导航、底盘、雷达、IMU、Edge Gateway | 与上项同样受硬件自启选项控制，ROS 发现范围保持 `LOCALHOST` |
 | `lr-bluetooth.timer` / `lr-bluetooth.service` | 蓝牙名称、开启、可发现 | timer 开机启动 |
 | `NetworkManager.service` 和已保存热点连接 | 固定热点、DHCP | 开机加载热点连接，安装时不激活 |
+| `lr-network-agent.service`、`avahi-daemon.service` | 受控 Wi-Fi 切换、名称发现 | 开机启动；代理启动本身不改变网络 |
 | `lr-robot-mapping.service` | 实际 SLAM 建图模式 | **按需启动**，与导航模式互斥，不能一起开机运行 |
 
 安装器不启用旧 `lr-web-dev`（8001）、旧机械臂运行时、旧 XT369 蓝牙采集、旧地图同步 timer、旧自定义热点服务。当前方案采用 USB 电量计、本机地图注册和 NetworkManager 热点。
@@ -153,7 +155,7 @@ sudo ./deploy/robot-setup.sh apply \
 4. 按 `package-lock.json` 安装并构建前端，重新编译导航/决策 ROS 包及其本地依赖。
 5. 生成本车配置、串口稳定别名和权限、独立证书、数据库和服务凭据。
 6. 启动基础设施容器完成数据库初始化，创建真实机器人身份、操作员/维护账号，并导入基线地图；不生成假在线机器人或假定位。
-7. 安装并启用对应开机服务，保存固定 IP 热点配置。
+7. 安装并启用对应开机服务、网络代理和 Avahi，保存固定 IP 热点配置；按机器人身份设置主机名供局域网发现。
 8. 保存安装记录、私有配置快照、备份和账号文件。
 
 默认安装**不会立即启动导航或机械臂**；已启用的硬件服务将在下一次开机启动。安装期间会启动 Docker 和基础容器用于初始化数据。全部配置已确认且现场允许立即启动时，使用同一命令加 `--start`：
@@ -190,7 +192,13 @@ http://192.168.4.1:8000
 sudo ./deploy/robot-setup.sh check
 ```
 
-检查项目包括服务开机启用及运行状态、前端、API 依赖健康、六个设备别名、底盘里程计、BookArm 私有接口鉴权与真实模式、XT369 最近有效读数、热点固定 IP、蓝牙名称和开启状态。有一项失败就返回非零退出码。安装后尚未启动硬件或尚未重启加载热点时，相关检查失败是预期结果。
+检查项目包括服务开机启用及运行状态、前端、API 依赖健康、六个设备别名、底盘里程计、BookArm 私有接口鉴权与真实模式、XT369 最近有效读数、网络代理、热点配置和当前联网状态、蓝牙名称和开启状态。有一项失败就返回非零退出码。安装后尚未启动硬件或尚未重启加载热点时，相关检查失败是预期结果。
+
+### 交付后连接图书馆 Wi-Fi
+
+操作员登录热点入口后，在“系统 → 网络连接”选择目标 Wi-Fi、输入密码并切换；终端也切到目标网络，用页面提供的 `.local` 名称或路由器分配的新 IP 和 `8000` 端口登录，在切换开始后约 5 分钟内确认保留。确认后持久化并设置开机优先连接；未确认或连接失败会请求恢复原网络。可用“切回机器人热点”恢复固定 `192.168.4.1` 入口。单网卡不保证热点与 Wi-Fi 同时存在。
+
+目标网络密码由现场用户输入，不纳入 Git 或通用基线。新机部署依赖包括 `python3-dbus`、`avahi-daemon`、`libnss-mdns`；`LR_NETWORK_AGENT_SOCKET` 指向 `/run/lr-network-agent/network.sock`。旧迁移包不会自动包含新代理，更新后需重新导出/打包。完整步骤见[用户指南](../docs/用户使用指南.md)和[网络部署说明](HOTSPOT-ACCESS.md)。
 
 进程和接口在线不等于运动验收通过。首次运行还需要现场确认新机定位、地图对齐、底盘运动方向、限速、机械零点、取还书标定；动作验收通过正常前端流程完成。
 

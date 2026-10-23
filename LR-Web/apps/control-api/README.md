@@ -52,6 +52,13 @@ npm run dev
 
 ## 已实现接口
 
+- `GET /api/v1/system/network`：当前 Wi-Fi、IPv4、名称入口、切换状态。
+- `POST /api/v1/system/network/scan`：读取可用 Wi-Fi；热点模式仅使用缓存。
+- `POST /api/v1/system/network/connect`：提交已确认的 Wi-Fi/热点切换，返回 202 后延迟执行。
+- `POST /api/v1/system/network/confirm`：通过目标网络的 8000 代理访问后保留连接；约 5 分钟未确认恢复原网络。
+
+网络接口仅对已登录操作员、维护人员、管理员开放，使用 `LR_NETWORK_AGENT_SOCKET`（默认 `/run/lr-network-agent/network.sock`）调用独立 NetworkManager 代理。运行 API 本身不切换网络。需安装 `lr-network-agent.service`、系统 Python D-Bus 和 Avahi；详见 [网络部署说明](../../../deploy/HOTSPOT-ACCESS.md)。
+
 - `POST /api/v1/auth/login`：登录并返回 Bearer token。
 - `POST /api/v1/auth/register`：注册馆员账户。
 - `GET /api/v1/auth/me`、`GET /api/v1/current-user`：读取当前账户。

@@ -78,7 +78,7 @@ def bootstrap(p, *, install_deps):
             run(["apt-get", "install", "-y", "ca-certificates", "curl", "gnupg", "git", "build-essential",
                  "cmake", "pkg-config", "python3-venv", "python3-dev", "python3-pip", "python3-yaml",
                  "python3-serial", "python3-paho-mqtt", "python3-websockets", "python3-numpy", "python3-scipy",
-                 "network-manager", "bluez", "rfkill", "iw", "dnsmasq-base", "iproute2", "can-utils",
+                 "network-manager", "python3-dbus", "avahi-daemon", "libnss-mdns", "bluez", "rfkill", "iw", "dnsmasq-base", "iproute2", "can-utils",
                  "docker.io", "docker-compose-v2", "sudo", "jq", "openssl", "libgl1", "libglib2.0-0", "libpcap-dev"], env=env)
             if not Path("/opt/ros/jazzy/setup.bash").exists():
                 key = Path("/usr/share/keyrings/lr-ros-archive-keyring.asc")

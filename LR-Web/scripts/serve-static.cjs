@@ -57,8 +57,17 @@ const app = express();
 function authorizeBookarm(req, res, next) {
   let pathname;
   try {
-    pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
-    if (pathname.split('/').some((segment) => segment === '.' || segment === '..' || segment.includes('%'))) {
+    pathname = decodeURIComponent(
+      new URL(req.url, 'http://localhost').pathname,
+    );
+    if (
+      pathname
+        .split('/')
+        .some(
+          (segment) =>
+            segment === '.' || segment === '..' || segment.includes('%'),
+        )
+    ) {
       return res.status(400).json({ detail: '无效的请求路径' });
     }
   } catch {
@@ -68,19 +77,26 @@ function authorizeBookarm(req, res, next) {
     path: pathname,
     method: req.method,
   });
-  const check = http.get(`http://${API_TARGET}/api/v1/auth/bookarm-access?${query}`, {
-    headers: { Authorization: req.headers.authorization || '' },
-    timeout: 5000,
-  }, (response) => {
-    response.resume();
-    if (response.statusCode === 200) next();
-    else res.status(response.statusCode === 401 ? 401 : 403).json({
-      detail: response.statusCode === 401 ? '需要登录' : '当前账号没有调试权限',
-    });
-  });
+  const check = http.get(
+    `http://${API_TARGET}/api/v1/auth/bookarm-access?${query}`,
+    {
+      headers: { Authorization: req.headers.authorization || '' },
+      timeout: 5000,
+    },
+    (response) => {
+      response.resume();
+      if (response.statusCode === 200) next();
+      else
+        res.status(response.statusCode === 401 ? 401 : 403).json({
+          detail:
+            response.statusCode === 401 ? '需要登录' : '当前账号没有调试权限',
+        });
+    },
+  );
   check.on('timeout', () => check.destroy());
   check.on('error', () => {
-    if (!res.headersSent) res.status(503).json({ detail: '登录服务暂时不可用，请稍后重试' });
+    if (!res.headersSent)
+      res.status(503).json({ detail: '登录服务暂时不可用，请稍后重试' });
   });
 }
 
@@ -97,6 +113,13 @@ app.use(
   ['/api', '/health'],
   expressHttpProxy(API_TARGET, {
     proxyReqPathResolver: (req) => url.parse(req.originalUrl).path || '/',
+    proxyReqOptDecorator: (options, req) => ({
+      ...options,
+      headers: {
+        ...options.headers,
+        'x-lr-local-address': req.socket.localAddress || '',
+      },
+    }),
   }),
 );
 

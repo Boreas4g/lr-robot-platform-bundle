@@ -1,81 +1,87 @@
-# 热点与访客访问
+# 热点、局域网与访客访问
 
-## 交付目标
+更新：2026-10-24。操作员可使用作业、地图与导航、系统；调试中心的页面和 API 仍受维护角色限制。操作步骤及 PDF 来源见[用户使用指南](../docs/用户使用指南.md)。
 
-车载电脑自己提供 Wi-Fi 局域网。开机后，用户用手机或电脑连接“图书馆机器人”，输入热点密码 `12345678`，在浏览器访问固定地址 `http://192.168.4.1:8000`，以 `operator` / `123456` 登录。无需进入车载电脑桌面，也不依赖现场路由器或互联网。公开功能为作业、地图与导航、系统。
+## 两种接入方式
 
-当前 `LR_5G` 仅用于维护联网，并非最终用户接入方案。现阶段不切换该网络；热点是否广播须以实际启用和客户端验收为准。
+| 模式 | 终端连接的网络 | 网页入口 |
+| --- | --- | --- |
+| 车载热点 | 图书馆机器人，默认密码 `12345678` | `http://192.168.4.1:8000` |
+| 图书馆 Wi-Fi | 与车载电脑相同、允许设备互访的局域网 | `http://机器人当前IP:8000`，或页面显示的 .local 名称 |
 
-## 当前状态
+网站操作员默认 `operator / 123456`；网站密码与 Wi-Fi 密码是两项。API 重启或会话满 24 小时后需重新登录。不同 IP/主机名属于不同浏览器来源，切换入口后也需登录。完整本机维护凭据位于 `.local-deploy/hotspot-access.txt`，不得提交 Git。
 
-- Web 前端和 control-api 已从当前项目目录运行，网页入口为 `8000`，`8001` 已停用。
-- 本机网页为 <http://localhost:8000>；连接当前局域网时可访问 <http://192.168.3.22:8000>。
-- 登录已开启。普通账号只显示作业、地图与导航、系统；调试中心的页面路由、控制 API 和 BookArm 代理均有服务端权限校验。
-- 操作员账号为 `operator`，密码已按用户要求改为 `123456`，新密码登录成功、旧密码被拒绝。完整维护凭据保存在 `.local-deploy/hotspot-access.txt`（0600，目录 0700），不提交到 Git。API 服务重启或会话满 24 小时后需要重新登录。
-- Bluetooth 开机常开，广播名称为“图书馆机器人”，保持可发现、可配对。已安装的 `lr-bluetooth.timer` 每 30 秒恢复这些设置。
-- Wi-Fi 热点的服务 `lr-hotspot.service` 已安装，但目前已停止并禁用开机启动，避免中断现有无线网络；车载热点尚未广播。
-- 系统另有 NetworkManager 的 `Hotspot` 配置（SSID 同为“图书馆机器人”）。已将此未启用的配置固定为 `192.168.4.1/24`、2.4 GHz 信道 6，保持 `autoconnect=no`。修改保存配置不会开启热点，也不代表客户端接入已经验收；不要在当前无线维护连接下直接激活它，否则会占用 `wlo1` 并中断 `LR_5G`。排查“连接热点后地址打不开”时，先确认实际启用的是哪种热点，以及客户端取得的 IP 和网关；仅保存配置不会产生 `192.168.4.1` 地址。
+用户已反馈热点接入、登录和控制页面正常。本次开发验证时保留维护连接 LR_5G，没有激活或断开 Wi-Fi。当前地址只代表当时的路由器分配结果；不要把 192.168.3.22 写死为交付地址。实时状态在“系统 → 网络连接”查看。
 
-## 热点硬件限制
+## 网页切换流程
 
-车载电脑当前只有一块 Intel Wi-Fi 网卡。它正在连接 5 GHz 的 `LR_5G`，而本机无线监管配置禁止该频段作为热点发射；这块网卡也不能在保持当前连接的同时将热点切到另一个信道。已验证 NetworkManager 的并发连接会因该限制启动失败。
+1. 确认机器人停止，没有待执行、执行中、暂停的作业、导航、手动控制或建图。
+2. 登录 8000 端口控制台，打开“系统 → 网络连接”，选择网卡和 Wi-Fi。热点模式只显示缓存网络，避免主动扫描打断现有终端；未列出的网络可手动添加。
+3. 输入目标密码，先保存名称入口，例如本机 `http://lr-control.local:8000/system/network`，并准备通过路由器查询 IP 的备用办法。
+4. 勾选提示后确认。服务先返回任务，再延迟约 5 秒切换，单网卡热点会暂时消失。
+5. 终端连接目标 Wi-Fi，使用名称入口或新 IPv4 地址重新登录，点击“确认保留此连接”。只有经目标网卡的新地址访问才允许确认。
+6. 从切换开始约 5 分钟未确认，或约 45 秒未获得 IPv4 地址，系统请求恢复原连接；NetworkManager 自身的检查点在代理故障时也保留超时恢复能力。以页面倒计时和结果为准。
 
-当前保持 `LR_5G` 连接。脚本不包含断开网络、关闭 Wi-Fi 或改变默认路由的命令。两种交付模式都要求目标无线芯片没有已连接接口和已分配 IP；占用时直接拒绝启动。热点不会自动转发局域网或互联网流量。
+确认后保存目标连接及密码并提高其开机自动连接优先级。其他网络配置保留；只有与目标连接竞争的最高优先级配置降低一级。可在“当前连接”中切回已配置的 192.168.4.1/24 热点，同样需要经热点地址重新登录确认。已保存的 Wi-Fi 不可用时，不保证立即回到热点；现场应保留有线或本地维护办法。
 
-### 方案 A：车载网卡专用于本地热点
+支持开放网络、WPA/WPA2-PSK 和 WPA3-SAE 个人网络；不处理企业 802.1X、网页认证或绕过访客隔离。名称发现依赖 Avahi/mDNS、终端和路由器支持；名称解析失败时使用路由器客户端列表中的 IP。建议管理员配置 DHCP 地址保留。功能不提供跨互联网控制。
 
-这是无需上联 Wi-Fi 的车载独立运行模式，不强制增加第二块网卡。已准备配置示例 `deploy/etc-templates/hotspot-standalone.env.example`，尚未安装到系统。
-
-该模式必须在现场安排切换或已有验证通过的备用维护网络时实施：预先确保 `wlo1` 不再被 NetworkManager 用于连接其他 Wi-Fi，将它保留给本地 AP；再部署 standalone 配置并启用热点服务。开机后不能让上联自动连接抢占这块无线芯片。此准备会改变现有联网方式，本次未执行。
-
-当前只允许做只读检查：
-
-```bash
-LR_HOTSPOT_MODE=standalone LR_WIFI_STATION=wlo1 python3 deploy/scripts/robot-hotspot.py --check
-```
-
-如果当前仍连接 `LR_5G`，检查应拒绝启动并报告网卡正在使用；这不是热点故障，也不会自动断网。独立模式的广播、DHCP、重启自启尚未经过现场验收。
-
-### 方案 B：保留上联，另一块网卡提供热点
-
-这是当前需要保持 `LR_5G` 不断开时的并行部署方案。程序会校验物理无线芯片，而不是只比较接口名称。默认模式为 `isolated`。
-
-没有第二块独立网卡时，isolated 模式启动前检查会直接拒绝运行，不会操作当前网络。增加网卡后，将服务的 `LR_WIFI_STATION` 指向新接口，并配置 `/etc/lr-platform/hotspot.env`：
+## 服务与权限
 
 ```text
-LR_WIFI_STATION=<USB-Wi-Fi-interface>
-LR_UPSTREAM_WIFI=wlo1
-LR_HOTSPOT_MODE=isolated
+浏览器 :8000 /system/network
+  → serve-static.cjs 同源代理（覆盖 X-LR-Local-Address）
+  → control-api /api/v1/system/network（登录及角色验证）
+  → /run/lr-network-agent/network.sock（root:服务用户组，0660）
+  → lr-network-agent.service → NetworkManager D-Bus
 ```
 
-可先用只读检查确认网卡条件（把占位符替换为新接口名）：
+API 以普通服务用户运行；网络代理提供固定的状态、扫描、连接、确认操作，不开放 shell 或任意命令。密码仅经请求体和本机 D-Bus 传递，不进入命令行、返回值、会话存储和应用日志。临时新连接先留在内存，确认后持久化；失败时恢复原网络并删除本次临时连接。
+
+代理源码：`deploy/libexec/lr-network-agent.py`；单元：`deploy/systemd/lr-network-agent.service`；API 配置：`LR_NETWORK_AGENT_SOCKET=/run/lr-network-agent/network.sock`。代理启动和状态读取不改变网络，安装脚本不主动切换无线连接。
+
+接口：`GET /api/v1/system/network`；`POST .../scan`、`POST .../connect`、`POST .../confirm`。全部要求网站登录，角色限系统管理员、维护人员和图书馆操作员。连接接口检查机器人任务状态。确认必须走 8000 生产代理，直接访问 8080 或普通 Umi 开发代理不属于受支持的交接入口。
+
+新机适配脚本安装 python3-dbus、NetworkManager、Avahi 和 mDNS 解析支持，启用代理，按机器人身份设置主机名。见[迁移指南](MIGRATION-GUIDE.zh-CN.md)。不要对正在运行的机器人执行完整迁移 apply。
+
+已安装机器的维护升级，在作业停止后执行（单元的 Group 必须改为实际 API 服务用户组）：
 
 ```bash
-LR_WIFI_STATION=<USB-Wi-Fi-interface> python3 deploy/scripts/robot-hotspot.py --check
+sudo install -D -o root -g root -m 0755 deploy/libexec/lr-network-agent.py /usr/local/libexec/lr-network-agent.py
+sudo install -o root -g root -m 0644 deploy/systemd/lr-network-agent.service /etc/systemd/system/lr-network-agent.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now lr-network-agent.service avahi-daemon.service
+# 按 LOCAL-DEPLOYMENT.md 构建前端后，重启前后端加载新版本。
+sudo systemctl restart lr-control-api.service lr-web-static.service
 ```
 
-检查通过后再启用服务，并检查热点广播和前端。此时只会在独立网卡上建立 `lr-ap0`，不会断开上联或调整系统默认路由：
+前提为系统已有 python3-dbus 和 Avahi；安装依赖时不得允许包管理器重启当前网络。上面的代理启动不激活任何 Wi-Fi。切勿为测试运行 nmcli connection up、重启 NetworkManager 或启停当前热点。
+
+## 只读检查与问题定位
 
 ```bash
-sudo systemctl enable --now lr-hotspot.service
-systemctl status lr-hotspot.service --no-pager
-sudo hostapd_cli -p /run/lr-hotspot/hostapd -i lr-ap0 status
-ip -4 address show lr-ap0
-curl --fail http://192.168.4.1:8000/health
+systemctl is-active lr-network-agent.service lr-control-api.service lr-web-static.service avahi-daemon.service
+systemctl is-enabled lr-network-agent.service
+curl --fail --unix-socket /run/lr-network-agent/network.sock http://localhost/status
+curl --fail http://127.0.0.1:8000/health
+nmcli -f DEVICE,TYPE,STATE,CONNECTION device status
+journalctl -u lr-network-agent.service -n 50 --no-pager
 ```
 
-成功后，手机或电脑连接 SSID `图书馆机器人`，输入 Wi-Fi 密码 `12345678`，在浏览器打开 <http://192.168.4.1:8000>，再使用操作员网站账号登录。热点提供本地 DHCP 和 `robot.lan` 名称，不提供互联网出口。也可用 `http://robot.lan:8000`。
+- 页面报 503：检查代理、/usr/bin/python3 的 dbus 模块、socket 服务组是否与 API 用户匹配。
+- 显示恢复未完成：不要连发切换请求；等待 NetworkManager 检查点超时，现场检查后再重启代理清理状态。
+- 新 IP 可登录但不能确认：用目标网卡地址的 8000 入口，避免 localhost、另一块网卡或直接 8080。
+- 切换后原 IP 不能访问：使用名称入口或查路由器 DHCP 客户端列表。
+- 服务正常但终端打不开：确认同网段可互访、访客隔离、TCP 8000；不要对外开放后端、ROS/DDS、MQTT 或机械臂端口。
 
-## Bluetooth
+## 热点与蓝牙限制
 
-Bluetooth 当前用于广播身份、发现和配对。它不提供网络共享或网页入口；网页访问使用现有局域网或未来的 Wi-Fi 热点。已启用 `bluetooth.service` 和 `lr-bluetooth.timer`；定时器调用一次性的 `lr-bluetooth.service`，该服务执行完显示 inactive 属于正常现象。`12345678` 是 Wi-Fi 热点密码，Bluetooth 配对使用系统配对流程。
+固定热点由 NetworkManager 的 AP 连接管理，IPv4 共享模式地址为 192.168.4.1/24。只保存配置不会立即广播热点。网页仅列出该网卡已存在且地址正确的 AP 配置；不改变热点名称和密码。
 
-检查状态：
+单网卡并发取决于硬件、驱动和信道，当前功能采用模式切换。需要热点与上联 Wi-Fi 长期同时存在时，建议两块独立网卡。历史 lr-hotspot.service / robot-hotspot.py 使用 hostapd，不能与 NetworkManager 在同一网卡同时运行；网页模块管理 NetworkManager 接口，迁移安装器默认停用旧热点服务。
 
-```bash
-systemctl is-enabled lr-hotspot.service lr-bluetooth.timer
-systemctl is-active lr-hotspot.service lr-bluetooth.timer bluetooth.service
-journalctl -u lr-hotspot.service -u lr-bluetooth.service -n 50 --no-pager
-```
+Bluetooth 身份发现和配对由 lr-bluetooth.timer 维持，名称为“图书馆机器人”，不承担网页网络共享。热点密码不是蓝牙配对码。
 
-登录页、三个公开模块及手机布局已部署。已复测 1440 px 桌面、360 px 手机竖屏和 844 px 横屏，9 个公开页面无整页横向溢出、脚本错误或业务 HTTP 错误。真实运行服务的地图图片、机器人和电池 WebSocket、登录退出及调试拒绝均验证通过；24 项权限测试、代理集成测试、TypeScript 检查均已通过。此前全量 201 项前端测试及 97 项相关 API 测试已通过。热点两种模式的防断网检查另有自动化测试。实际热点广播、手机 DHCP 接入与冷启动，需要在现场网络切换完成或独立网卡接入后验收。未执行机器人运动、取还书或导航动作。
+## 验证范围
+
+自动测试模拟连接与恢复动作，涵盖权限、校验、幂等、错误密码、无 DHCP、超时恢复、错误入口拒绝确认及保存失败恢复；不连接或断开现场 Wi-Fi。真实跨网络切换、终端重连及冷启动重连仍需现场使用者在可恢复的条件下验收，不能用单元测试代替无线硬件验收。

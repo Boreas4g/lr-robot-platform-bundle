@@ -20,6 +20,7 @@ content = content.replace(new RegExp('<p><img src="([^"]+)" alt="([^"]*)"></p>',
   return `<figure class='${src.includes('phone') ? 'phone' : 'desktop'}'><img src='data:image/png;base64,${image}' alt='${label}'><figcaption>${label}</figcaption></figure>`;
 });
 content = content.replace('<a href="../deploy/HOTSPOT-ACCESS.md">热点与访客访问部署说明</a>', '项目文件 <code>deploy/HOTSPOT-ACCESS.md</code>《热点与访客访问部署说明》');
+content = content.replace('<h3>地址和范围</h3>', '<h3 style="break-before: page">地址和范围</h3>');
 const toc = headings.map((title, i) => `<li><a href='#section-${i + 1}'>${title}</a></li>`).join('');
 const sections = content.split(new RegExp('(?=<h2 id=)')).filter(part => part.trim());
 content = [[1], [2], [3], [4, 5], [6], [7], [8], [9], [10, 11]].map(group => `<section class='sheet'>${group.map(number => sections[number - 1]).join('')}</section>`).join('');
@@ -62,8 +63,8 @@ figcaption { color: #6b7d94; font-size: 8.5pt; margin-top: 1.5mm; }
 .sheet > h2:first-child { margin-top: 0; }
 </style></head><body>
 <section class='cover'><div class='brand'>智巡 · LIBRARY ROBOT</div><h1>图书馆机器人<br>用户使用指南</h1><p class='subtitle'>手机 · 平板 · 电脑<br>连接、登录与日常操作</p>
-<div class='note'><strong>当前部署说明</strong><br>机器人热点尚未启用。本指南中的热点连接流程用于启用并验收后的正式交付；当前维护访问方式见第九节。</div>
-<p class='meta'>部署状态核对：2026 年 10 月 23 日<br>适用对象：图书馆机器人操作人员</p>
+<div class='note'><strong>两种连接方式</strong><br>连接机器人热点后访问 192.168.4.1:8000；也可在“系统 → 网络连接”切换到图书馆 Wi-Fi，通过同一局域网继续控制。切换与恢复步骤见第九节。</div>
+<p class='meta'>更新日期：2026 年 10 月 24 日<br>适用对象：图书馆机器人操作人员</p>
 <nav class='toc'><h2>目录</h2><ol>${toc}</ol></nav></section><main>${content}</main></body></html>`;
 const htmlPath = path.join(folder, '.guide-print.html');
 (async () => {

@@ -6,7 +6,7 @@
 
 ## 系统架构与代码分布
 
-用户从手机、平板或电脑连接机器人，请先阅读[图书馆机器人用户使用指南](docs/用户使用指南.md)。正式交付方式为连接车载热点“图书馆机器人”后访问 `http://192.168.4.1:8000`；热点目前尚未启用。当前维护入口仍为 `http://192.168.3.22:8000`。部署细节见[热点与访客访问](deploy/HOTSPOT-ACCESS.md)。
+用户从手机、平板或电脑连接机器人，请先阅读[图书馆机器人用户使用指南](docs/用户使用指南.md)。连接车载热点“图书馆机器人”后访问 `http://192.168.4.1:8000`；登录后在 **系统 → 网络连接** 选择图书馆 Wi-Fi、输入密码并切换。终端接入同一 Wi-Fi 后，通过页面显示的 `.local` 名称或路由器分配的新 IP 和 `8000` 端口重新登录并确认连接。约 5 分钟未确认则恢复原网络。部署与维护见[热点与访客访问](deploy/HOTSPOT-ACCESS.md)。
 
 ```
 浏览器 ──> :8000  lr-web-static.service    LR-Web/scripts/serve-static.cjs（静态托管 dist/ + 反代）
@@ -21,6 +21,7 @@ lr-robot-map-sync.service/timer ──> 地图 mTLS 同步
 lr-bookarm-can.service ──> can0 @1Mbps 初始化
 lr-xt369p-battery/-rfcomm.service ──> 电池遥测 / 蓝牙 SPP
 lr-host-start-agent.service ──> root 启动代理（/usr/local/libexec/）
+lr-network-agent.service ──> 受控 Wi-Fi 切换代理（私有 Unix socket → NetworkManager）
 lr-station-discovery.service ──> 局域网发现广播
 ```
 

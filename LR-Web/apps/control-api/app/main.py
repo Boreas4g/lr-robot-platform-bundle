@@ -11,6 +11,7 @@ from .api.operations import router as operations_router
 from .api.robots import open_router as robots_open_router
 from .api.robots import router as robots_router
 from .api.system import router as system_router
+from .api.network import router as network_router
 from .config import get_settings
 from .dependencies import get_current_user, require_feature_access
 from .realtime import robot_realtime_hub
@@ -47,6 +48,7 @@ app.include_router(robots_router, dependencies=[Depends(get_current_user)])
 app.include_router(robots_open_router, dependencies=[Depends(get_current_user)])
 app.include_router(operations_router, dependencies=[Depends(require_feature_access)])
 app.include_router(system_router, dependencies=[Depends(get_current_user)])
+app.include_router(network_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])
