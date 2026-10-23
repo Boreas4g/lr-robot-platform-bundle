@@ -39,6 +39,7 @@ const securityName = {
 };
 const explain = (error: unknown) =>
   error instanceof Error ? error.message : '网络服务暂不可用';
+type SwitchError = { title: string; description: string };
 function readPending(): NetworkOperation | undefined {
   if (typeof window === 'undefined') return undefined;
   try {
@@ -60,6 +61,7 @@ export default function NetworkPage() {
   const [networks, setNetworks] = useState<WifiNetwork[]>([]);
   const [scanNote, setScanNote] = useState('');
   const [error, setError] = useState('');
+  const [switchError, setSwitchError] = useState<SwitchError>();
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -169,6 +171,7 @@ export default function NetworkPage() {
           }),
     };
     setSubmitting(true);
+    setSwitchError(undefined);
     submitInFlight.current = true;
     const provisional: NetworkOperation = {
       id: request.request_id,
@@ -195,10 +198,20 @@ export default function NetworkPage() {
     } catch (e) {
       setOpen(false);
       form.resetFields();
-      setError(
-        explain(e) +
-          '。请刷新状态确认请求结果；如果连接已断开，请按交接步骤操作。',
-      );
+      const detail = explain(e);
+      if (detail.startsWith('机器人仍在执行作业')) {
+        setOperation(undefined);
+        sessionStorage.removeItem(PENDING_KEY);
+        setSwitchError({
+          title: '网络切换未受理',
+          description: `${detail}。本次请求未提交，当前网络没有切换。`,
+        });
+      } else {
+        setSwitchError({
+          title: '网络切换结果待确认',
+          description: `${detail}。服务未能确认请求是否已执行，请勿重复提交；如果页面刚断开，请连接目标 Wi-Fi 后点击“进入新网址”查看状态。`,
+        });
+      }
     } finally {
       setSubmitting(false);
       submitInFlight.current = false;
@@ -226,6 +239,9 @@ export default function NetworkPage() {
     Math.ceil((operation?.rollback_at || 0) - now / 1000),
   );
   const urls = device?.addresses.map((ip) => `http://${ip}:8000`) || [];
+  const handoffUrl = operation?.addresses[0]
+    ? networkUrl(operation.addresses[0])
+    : operation?.local_url || '';
   return (
     <PageContainer
       title="网络连接"
@@ -239,6 +255,15 @@ export default function NetworkPage() {
             title={pending ? '连接正在交接' : '无法读取网络状态'}
             description={error}
             action={<Button onClick={() => void refresh()}>刷新状态</Button>}
+          />
+        )}
+        {switchError && (
+          <Alert
+            type="warning"
+            showIcon
+            title={switchError.title}
+            description={switchError.description}
+            action={<Button onClick={() => setSwitchError(undefined)}>知道了</Button>}
           />
         )}
         {operation && (
@@ -298,6 +323,16 @@ export default function NetworkPage() {
                       <a href={networkUrl(ip)}>{networkUrl(ip)}</a>
                     </Typography.Paragraph>
                   ))}
+                  {handoffUrl && (
+                    <Button
+                      type="primary"
+                      icon={<LinkOutlined />}
+                      href={handoffUrl}
+                      target="_self"
+                    >
+                      进入新网址
+                    </Button>
+                  )}
                   <Typography.Text type="secondary">
                     若 .local 名称打不开，请在路由器客户端列表查找车载电脑的新
                     IP，并访问

@@ -64,6 +64,20 @@ def test_active_work_blocks_switch_before_agent(client, monkeypatch):
     assert client.post("/api/v1/system/network/connect", json=payload()).status_code == 409
 
 
+def test_idle_robot_can_switch_with_historical_queued_and_paused_tasks(client, monkeypatch):
+    monkeypatch.setattr(
+        store,
+        "tasks",
+        [SimpleNamespace(status="queued"), SimpleNamespace(status="paused")],
+    )
+    monkeypatch.setattr(store, "robots", [SimpleNamespace(status="idle")])
+    calls = []
+    monkeypatch.setattr(network, "agent_request", lambda *args: calls.append(args) or {"phase": "scheduled"})
+    response = client.post("/api/v1/system/network/connect", json=payload())
+    assert response.status_code == 202
+    assert calls[0][1] == "/connect"
+
+
 @pytest.mark.parametrize("status", ["busy", "mapping", "navigating", "manual"])
 def test_robot_movement_blocks_network_switch(client, monkeypatch, status):
     monkeypatch.setattr(store, "robots", [SimpleNamespace(status=status)])

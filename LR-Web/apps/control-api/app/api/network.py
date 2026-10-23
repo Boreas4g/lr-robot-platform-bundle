@@ -112,10 +112,12 @@ def scan_networks(body: ScanRequest, _: User = Depends(network_operator)):
 
 @router.post("/connect", status_code=202)
 def connect_network(body: ConnectRequest, _: User = Depends(network_operator)):
-    if any(t.status in {"queued", "running", "paused"} for t in store.tasks) or any(
+    # Queued and paused records can remain in history after the robot is idle.
+    # Block only active execution, plus robot telemetry that indicates motion.
+    if any(t.status == "running" for t in store.tasks) or any(
         r.status in {"busy", "mapping", "navigating", "manual"} for r in store.robots
     ):
-        raise HTTPException(409, "机器人正在作业、导航或建图；请结束操作并确认停止后再切换网络")
+        raise HTTPException(409, "机器人仍在执行作业、导航、手动控制或建图；请先停止机器人再切换网络")
     data = body.model_dump(mode="json", exclude={"password"}, exclude_none=True)
     data["password"] = body.password.get_secret_value()
     return agent_request("POST", "/connect", data)
