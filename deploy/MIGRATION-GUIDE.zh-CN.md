@@ -20,7 +20,7 @@
 | 机械标定 | 相机到基座外参、取书槽位、还书槽位、机械臂惯量、取还书动作 profile | 基线 `bookarm/calibration/*`、`tuning/*`；生成 `/etc/lr-bookarm/config/calibration/*`，profile 写入项目 `recordings/tuning/` |
 | XT369 USB 电量计 | 是否接入、USB 权限；多个电量计时指定序列号；电池容量和标称电压 | `battery.serial/capacity_ah/nominal_voltage_v`；生成 udev 权限及采集服务；电池状态在 `/var/lib/lr-platform/battery/` |
 | 地图与定位 | 地图是否属于**实际现场**，有效 ID/边界、分辨率、原点；新机初始定位 | `active_map_id`；基线地图注册表、PGM/YAML、自动定位参数；不复制旧机的实时姿态和上次定位结果 |
-| 热点 | 新电脑无线网卡名/MAC、AP 模式能力、SSID、密码、信道 | `hotspot.*`；`/etc/NetworkManager/system-connections/lr-robot-hotspot.nmconnection`；固定 `192.168.4.1/24`，共享模式提供 DHCP |
+| 热点 | 新电脑无线网卡名/MAC、AP 模式能力、SSID、密码、信道 | `hotspot.*`；`/etc/NetworkManager/system-connections/lr-robot-hotspot.nmconnection`；固定 `192.168.4.1/24`，共享模式提供 DHCP；开机自动连接优先级 `999` |
 | 局域网 Wi-Fi | 现场 SSID、密码、允许设备互访；可选 DHCP 地址保留 | 安装后通过“系统 → 网络连接”配置，不复制旧机 Wi-Fi 密码；Avahi 提供页面显示的 `.local` 名称 |
 | 蓝牙 | 适配器能否使用、对外名称 | `bluetooth_name`；`/etc/lr-platform/bluetooth.env`；timer 每 30 秒维持开启和可发现 |
 | 网站登录和权限 | 用户密码、维护账号；对外入口 | `operator_password`；操作员仅开放**作业、地图与导航、系统**；维护管理员独立随机密码；入口统一 `8000`，不用 `8001` |
@@ -49,7 +49,7 @@
 | `lr-bookarm-can.service`、`lr-bookarm-takeout.service` | CAN 与取/还书机械臂、相机、升降台、推杆 | `hardware_autostart=true` 且现场标定/启动条件确认后设为开机启动 |
 | `lr-robot-runtime.service` | ROS 导航、底盘、雷达、IMU、Edge Gateway | 与上项同样受硬件自启选项控制，ROS 发现范围保持 `LOCALHOST` |
 | `lr-bluetooth.timer` / `lr-bluetooth.service` | 蓝牙名称、开启、可发现 | timer 开机启动 |
-| `NetworkManager.service` 和已保存热点连接 | 固定热点、DHCP | 开机加载热点连接，安装时不激活 |
+| `NetworkManager.service` 和已保存热点连接 | 固定热点、DHCP | 开机默认加载优先级 `999` 的机器人热点，安装时不激活 |
 | `lr-network-agent.service`、`avahi-daemon.service` | 受控 Wi-Fi 切换、名称发现 | 开机启动；代理启动本身不改变网络 |
 | `lr-robot-mapping.service` | 实际 SLAM 建图模式 | **按需启动**，与导航模式互斥，不能一起开机运行 |
 
@@ -196,7 +196,7 @@ sudo ./deploy/robot-setup.sh check
 
 ### 交付后连接图书馆 Wi-Fi
 
-操作员登录热点入口后，在“系统 → 网络连接”选择目标 Wi-Fi、输入密码并切换；终端也切到目标网络，返回控制页点击“进入新网址”跳转到车载电脑取得的新 IP。`.local` 名称和路由器客户端列表中的新 IP 可作备用入口，使用 `8000` 端口登录后，在切换开始后约 5 分钟内确认保留。确认后持久化并设置开机优先连接；未确认或连接失败会请求恢复原网络。可用“切回机器人热点”恢复固定 `192.168.4.1` 入口。单网卡不保证热点与 Wi-Fi 同时存在。
+操作员登录热点入口后，在“系统 → 网络连接”选择目标 Wi-Fi、输入密码并切换；终端也切到目标网络，返回控制页点击“进入新网址”跳转到车载电脑取得的新 IP。`.local` 名称和路由器客户端列表中的新 IP 可作备用入口，使用 `8000` 端口登录后，在切换开始后约 5 分钟内确认保留。确认后 Wi-Fi 配置会持久保存；车载电脑重启后默认启动机器人热点，需要使用 Wi-Fi 时可从页面再次切换。未确认或连接失败会请求恢复原网络。固定热点入口为 `192.168.4.1`。单网卡不保证热点与 Wi-Fi 同时存在。
 
 目标网络密码由现场用户输入，不纳入 Git 或通用基线。新机部署依赖包括 `python3-dbus`、`avahi-daemon`、`libnss-mdns`；`LR_NETWORK_AGENT_SOCKET` 指向 `/run/lr-network-agent/network.sock`。旧迁移包不会自动包含新代理，更新后需重新导出/打包。完整步骤见[用户指南](../docs/用户使用指南.md)和[网络部署说明](HOTSPOT-ACCESS.md)。
 

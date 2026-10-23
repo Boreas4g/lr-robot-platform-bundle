@@ -223,25 +223,27 @@ class NetworkManager:
             values, self.dbus.UInt32(1), self.dbus.Dictionary({}, signature='sv'), timeout=10)
 
     def prefer(self, path, interface, journal):
-        # Use NM's highest priority for the confirmed choice. Only demote a
-        # competing maximum-priority profile; preserve all other preferences.
+        # Keep the hotspot at 999 and confirmed station Wi-Fi at 998.
+        # Demote only competing station profiles that could outrank it.
         settings = self.interface(BASE + '/Settings', NM + '.Settings')
         for other_path in settings.ListConnections(timeout=10):
             if str(other_path) == str(path):
                 continue
             profile = self.settings(other_path)
             other_connection = profile.get('connection', {})
-            if (profile.get('802-11-wireless') and
+            wireless = profile.get('802-11-wireless', {})
+            if (wireless.get('mode') != 'ap' and wireless and
                     other_connection.get('interface-name', interface) == interface and
-                    int(other_connection.get('autoconnect-priority', 0)) >= 999):
+                    int(other_connection.get('autoconnect-priority', 0)) >= 998):
                 values = self.profile_with_secrets(other_path)
                 journal.append((other_path, copy.deepcopy(values)))
-                values['connection']['autoconnect-priority'] = self.dbus.Int32(998)
+                values['connection']['autoconnect-priority'] = self.dbus.Int32(997)
                 self.update_profile(other_path, values)
         values = self.profile_with_secrets(path)
         journal.append((path, copy.deepcopy(values)))
         values['connection']['autoconnect'] = self.dbus.Boolean(True)
-        values['connection']['autoconnect-priority'] = self.dbus.Int32(999)
+        priority = 999 if values.get('802-11-wireless', {}).get('mode') == 'ap' else 998
+        values['connection']['autoconnect-priority'] = self.dbus.Int32(priority)
         self.update_profile(path, values)
 
     def restore_preferences(self, journal):
@@ -395,7 +397,7 @@ class NetworkController:
                 manager.prefer(self.connection, self.operation['interface'], journal)
                 manager.destroy(self.checkpoint)
                 self.checkpoint = None
-                self.operation.update(phase='confirmed', message='连接已保留，开机优先自动连接此网络。')
+                self.operation.update(phase='confirmed', message='连接已保留。车载电脑重启后默认启动机器人热点；如需使用此 Wi-Fi，请在网络连接页面切换。')
             except Exception:
                 if journal:
                     try:

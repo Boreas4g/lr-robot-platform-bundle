@@ -505,7 +505,7 @@ def hotspot_keyfile(p, connection_uuid):
     h = p["hotspot"]
     mac = f"mac-address={h['mac']}\n" if h.get("mac") else ""
     return (f"[connection]\nid=lr-robot-hotspot\nuuid={connection_uuid}\ntype=wifi\ninterface-name={h['interface']}\n"
-            "autoconnect=true\nautoconnect-priority=100\n\n[wifi]\nmode=ap\nband=bg\n"
+            "autoconnect=true\nautoconnect-priority=999\n\n[wifi]\nmode=ap\nband=bg\n"
             f"channel={h['channel']}\nssid={h['ssid']}\n{mac}\n[wifi-security]\nkey-mgmt=wpa-psk\n"
             f"proto=rsn;\npairwise=ccmp;\ngroup=ccmp;\npsk={h['password']}\n\n"
             "[ipv4]\nmethod=shared\naddress1=192.168.4.1/24\nnever-default=true\n\n[ipv6]\nmethod=disabled\n")
@@ -838,7 +838,7 @@ def apply_profile(p, profile_path, *, install_deps, start):
     if start:
         run(["systemctl", "start", *enabled_units(p)], capture=True)
     print(f"安装完成。备份：{backup}\n已设置开机自启：{', '.join(enabled_units(p))}\n"
-          "热点将在下次开机加载；未切断或重连当前无线网络，也未自动重启电脑。\n"
+          "机器人热点将在下次开机默认启动（自动连接优先级 999）；未切断或重连当前无线网络，也未自动重启电脑。\n"
           "账号文件：/etc/lr-platform/access-credentials.json（仅 root 可读）。")
     if not start:
         print("本次未启动导航/机械臂；现场具备启动条件后重启电脑，或重新执行 start 命令。")
@@ -995,7 +995,7 @@ def main():
     if args.command == "plan":
         check_hardware_bindings(p)
         print(f"配置校验通过：{p['robot_id']} / {p['service_user']} / {ROOT}\n热点地址：http://192.168.4.1:8000\n"
-              f"开机自启：{', '.join(enabled_units(p))}\n不会在安装时激活热点、断开 Wi-Fi 或自动重启。")
+              f"开机自启：{', '.join(enabled_units(p))}\n开机默认启动机器人热点（自动连接优先级 999）；安装时不会激活热点、断开 Wi-Fi 或自动重启。")
         return 0
     if args.command == "start":
         if os.geteuid() != 0 or not Path("/etc/lr-platform/setup-receipt.json").exists():

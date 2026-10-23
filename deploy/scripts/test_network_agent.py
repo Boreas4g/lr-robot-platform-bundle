@@ -176,10 +176,15 @@ class ProfileTests(unittest.TestCase):
         manager = a.NetworkManager.__new__(a.NetworkManager)
         manager.dbus = SimpleNamespace(Int32=int, UInt32=int, Boolean=bool, Dictionary=lambda v, **_: v)
         profiles = {name: {'connection': {'interface-name': iface, 'autoconnect-priority': priority},
-                           '802-11-wireless': {'mode': 'infrastructure'},
+                           '802-11-wireless': {'mode': mode},
                            '802-11-wireless-security': {'key-mgmt': 'wpa-psk'}}
-                    for name, iface, priority in [('target', 'wlan0', 0), ('previous', 'wlan0', 999),
-                                                  ('normal', 'wlan0', 100), ('other-device', 'wlan1', 999)]}
+                    for name, iface, priority, mode in [
+                        ('target', 'wlan0', 0, 'infrastructure'),
+                        ('previous', 'wlan0', 999, 'infrastructure'),
+                        ('normal', 'wlan0', 100, 'infrastructure'),
+                        ('other-device', 'wlan1', 999, 'infrastructure'),
+                        ('hotspot', 'wlan0', 999, 'ap'),
+                    ]}
         interfaces = {}
         for name, value in profiles.items():
             interface = Mock()
@@ -194,15 +199,21 @@ class ProfileTests(unittest.TestCase):
         manager.prefer('target', 'wlan0', journal)
         target = interfaces['target'].Update2.call_args.args[0]
         previous = interfaces['previous'].Update2.call_args.args[0]
-        self.assertEqual(target['connection']['autoconnect-priority'], 999)
-        self.assertEqual(previous['connection']['autoconnect-priority'], 998)
+        self.assertEqual(target['connection']['autoconnect-priority'], 998)
+        self.assertEqual(previous['connection']['autoconnect-priority'], 997)
         self.assertTrue(target['connection']['autoconnect'])
         for values in [target, previous]:
             self.assertEqual(values['802-11-wireless-security']['psk'], 'preserved-secret')
         interfaces['normal'].Update2.assert_not_called()
         interfaces['other-device'].Update2.assert_not_called()
+        interfaces['hotspot'].Update2.assert_not_called()
         manager.restore_preferences(journal)
         self.assertEqual(interfaces['previous'].Update2.call_args.args[0]['connection']['autoconnect-priority'], 999)
+        manager.prefer('hotspot', 'wlan0', [])
+        hotspot = interfaces['hotspot'].Update2.call_args.args[0]
+        self.assertEqual(hotspot['connection']['autoconnect-priority'], 999)
+        self.assertTrue(hotspot['connection']['autoconnect'])
+        self.assertEqual(hotspot['802-11-wireless-security']['psk'], 'preserved-secret')
 
 
 if __name__ == '__main__':

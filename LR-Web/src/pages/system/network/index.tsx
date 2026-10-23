@@ -500,7 +500,7 @@ export default function NetworkPage() {
                   Wi-Fi。
                 </li>
                 <li>
-                  确认成功后保存网络并优先自动连接。热点 IP 保留为
+                  确认成功后保存网络。车载电脑重启后默认开启机器人热点，热点 IP 为
                   192.168.4.1，局域网地址由路由器分配。
                 </li>
                 <li>

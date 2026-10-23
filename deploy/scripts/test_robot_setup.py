@@ -75,13 +75,15 @@ class MigrationTests(unittest.TestCase):
         self.profile["hardware_autostart"] = False
         units = setup.enabled_units(self.profile)
         self.assertTrue(set(setup.CORE).issubset(units))
+        self.assertIn("lr-network-agent.service", units)
         self.assertFalse(set(setup.HARDWARE).intersection(units))
         self.assertNotIn("lr-robot-mapping.service", units)
         self.assertNotIn('SUBSYSTEM=="tty"', setup.udev_rules(self.profile))
 
     def test_network_keyfile_preserves_fixed_subnet_and_password(self):
         value = setup.hotspot_keyfile(self.profile, "test-uuid")
-        for expected in ("mode=ap", "method=shared", "address1=192.168.4.1/24", "ssid=图书馆机器人", "psk=12345678", "never-default=true"):
+        for expected in ("autoconnect=true", "autoconnect-priority=999", "mode=ap", "method=shared",
+                         "address1=192.168.4.1/24", "ssid=图书馆机器人", "psk=12345678", "never-default=true"):
             self.assertIn(expected, value)
         self.assertNotIn("123456\n", value)
 
