@@ -1,5 +1,5 @@
 [Unit]
-Description=LR 控制站前端本地开发服务（Umi，8001，仅限本机）
+Description=LR 控制站前端本地调试服务（Umi，8001，仅限本机，不随系统启动）
 Wants=network-online.target lr-platform.service lr-web-static.service
 After=network-online.target lr-platform.service lr-web-static.service
 
@@ -17,6 +17,3 @@ RestartSec=5
 TimeoutStopSec=30
 IPAddressDeny=any
 IPAddressAllow=localhost
-
-[Install]
-WantedBy=multi-user.target

@@ -10,10 +10,9 @@ export const useStyles = createStyles(({ token }) => ({
     border: `1px solid ${token.colorBorderSecondary}`,
     borderRadius: 8,
     boxShadow: token.boxShadowTertiary,
-    '@media (max-width: 980px)': {
+    '@media (max-width: 1199px)': {
       gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
     },
-    '@media (max-width: 560px)': { gridTemplateColumns: '1fr' },
   },
   summaryItem: {
     display: 'flex',
@@ -23,17 +22,18 @@ export const useStyles = createStyles(({ token }) => ({
     padding: '22px 24px',
     borderRight: `1px solid ${token.colorBorderSecondary}`,
     '&:last-child': { borderRight: 0 },
-    '@media (max-width: 980px)': {
+    '@media (max-width: 1199px)': {
       '&:nth-child(2)': { borderRight: 0 },
       '&:nth-child(-n + 2)': {
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
       },
     },
     '@media (max-width: 560px)': {
-      minHeight: 102,
-      borderRight: 0,
-      borderBottom: `1px solid ${token.colorBorderSecondary}`,
-      '&:last-child': { borderBottom: 0 },
+      minHeight: 108,
+      padding: '14px 12px',
+      gap: 8,
+      '&:nth-child(2n)': { borderRight: 0 },
+      '&:nth-child(n + 3)': { borderBottom: 0 },
     },
   },
   summaryIcon: {
@@ -45,6 +45,12 @@ export const useStyles = createStyles(({ token }) => ({
     flex: '0 0 46px',
     borderRadius: 8,
     fontSize: 20,
+    '@media (max-width: 560px)': {
+      width: 32,
+      height: 36,
+      flex: '0 0 32px',
+      fontSize: 18,
+    },
   },
   blueIcon: { color: token.colorPrimary, background: token.colorPrimaryBg },
   greenIcon: { color: token.colorSuccess, background: token.colorSuccessBg },
@@ -57,6 +63,7 @@ export const useStyles = createStyles(({ token }) => ({
     fontSize: 28,
     fontWeight: 650,
     lineHeight: 1.15,
+    '@media (max-width: 560px)': { fontSize: 24 },
     '& small': {
       marginLeft: 4,
       color: token.colorTextTertiary,

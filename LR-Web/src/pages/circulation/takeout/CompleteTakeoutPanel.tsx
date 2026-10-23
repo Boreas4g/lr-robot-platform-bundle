@@ -290,6 +290,7 @@ export default function CompleteTakeoutPanel({
 
   return (
     <Card
+      className="robot-workflow-card"
       size="small"
       title="完整取书（导航一次或原地开始）"
       style={{ marginBottom: 16 }}
@@ -302,7 +303,7 @@ export default function CompleteTakeoutPanel({
         >
           发送导航（勾选后先导航到目标点并低速精调；不勾选则底盘不动，原地直接开始升降取书）
         </Checkbox>
-        <Space wrap size={[12, 8]}>
+        <Space className="robot-workflow-fields" wrap size={[12, 8]} style={{ width: '100%' }}>
           <Select
             style={{ minWidth: 260 }}
             placeholder="选择书籍（书籍管理）"

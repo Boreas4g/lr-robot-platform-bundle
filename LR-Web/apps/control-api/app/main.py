@@ -12,7 +12,7 @@ from .api.robots import open_router as robots_open_router
 from .api.robots import router as robots_router
 from .api.system import router as system_router
 from .config import get_settings
-from .dependencies import get_current_user
+from .dependencies import get_current_user, require_feature_access
 from .realtime import robot_realtime_hub
 from .schemas import HealthResponse, StationIdentity, User
 from .store import store
@@ -42,11 +42,10 @@ app.add_middleware(
 )
 app.include_router(auth_router)
 app.include_router(battery_router, dependencies=[Depends(get_current_user)])
-app.include_router(chassis_params_router, dependencies=[Depends(get_current_user)])
+app.include_router(chassis_params_router, dependencies=[Depends(require_feature_access)])
 app.include_router(robots_router, dependencies=[Depends(get_current_user)])
-# 免鉴权直控：jog 单独挂载，不经过登录依赖。
-app.include_router(robots_open_router)
-app.include_router(operations_router, dependencies=[Depends(get_current_user)])
+app.include_router(robots_open_router, dependencies=[Depends(get_current_user)])
+app.include_router(operations_router, dependencies=[Depends(require_feature_access)])
 app.include_router(system_router, dependencies=[Depends(get_current_user)])
 
 

@@ -1,5 +1,7 @@
 # 本机部署记录
 
+> **2026-10-23 增补**：本项目现已启用登录，普通操作账号只能使用作业、地图与导航、系统功能；调试中心菜单、直接页面和对应 API 均由服务端限制。热点与访客接入的当前状态、启动方式和验收步骤见[热点与访客访问](HOTSPOT-ACCESS.md)。
+
 > **2026-10-20 增补**：当前主机没有 root/sudo、Docker 及本 bundle 的
 > `lr-*` systemd 单元，控制站改为用户态部署（PostgreSQL/Redis/Mosquitto
 > 解包运行、uvicorn + node 静态站点）。操作说明、端口与测试结果见
@@ -18,7 +20,7 @@ ROS 2、BookArm、书脊识别模型、systemd 单元及启动脚本都从该项
 - 本次部署时的局域网地址：<http://192.168.3.22:8000>
 - API 文档：<http://localhost:8080/docs>
 - 健康检查：<http://localhost:8000/health>
-- 沿用现有免登录操作员模式。
+- 登录账号由管理员提供；操作员初始密码保存在本机权限为 0600 的 `.local-deploy/hotspot-access.txt`，不纳入 Git。
 
 所有 `lr-*` 服务继续由 systemd 管理，保留原有开机启动及失败重启设置。
 控制站的本地覆盖文件为：
@@ -28,12 +30,7 @@ ROS 2、BookArm、书脊识别模型、systemd 单元及启动脚本都从该项
 /etc/systemd/system/lr-control-api.service.d/90-local-bundle.conf
 ```
 
-本地调试前端 `http://localhost:8001` 由 `lr-web-dev.service` 管理并开机自动启动；systemd 网络过滤只允许它与本机回环地址通信。生产静态前端仍由 `lr-web-static.service` 提供 `:8000`。查看调试前端状态和日志：
-
-```bash
-systemctl status lr-web-dev.service --no-pager
-journalctl -u lr-web-dev.service -n 100 --no-pager
-```
+前端统一由 `lr-web-static.service` 提供 `:8000`，本机与局域网均访问此端口。`lr-web-dev.service` 已停用并取消开机启动，`8001` 不再作为服务入口。
 
 前端使用当前目录的 `dist/` 和 `scripts/serve-static.cjs`，API 使用当前目录的
 `apps/control-api/app/`，Python 环境沿用

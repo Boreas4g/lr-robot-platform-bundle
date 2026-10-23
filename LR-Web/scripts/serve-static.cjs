@@ -51,10 +51,44 @@ function bookarmProxyOptions() {
 
 const app = express();
 
+// Verify the browser session with control-api before using the private device
+// credential. Fail closed if authentication is unavailable; never trust a role
+// or a token supplied directly to the BookArm service by the browser.
+function authorizeBookarm(req, res, next) {
+  let pathname;
+  try {
+    pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+    if (pathname.split('/').some((segment) => segment === '.' || segment === '..' || segment.includes('%'))) {
+      return res.status(400).json({ detail: '无效的请求路径' });
+    }
+  } catch {
+    return res.status(400).json({ detail: '无效的请求路径' });
+  }
+  const query = new URLSearchParams({
+    path: pathname,
+    method: req.method,
+  });
+  const check = http.get(`http://${API_TARGET}/api/v1/auth/bookarm-access?${query}`, {
+    headers: { Authorization: req.headers.authorization || '' },
+    timeout: 5000,
+  }, (response) => {
+    response.resume();
+    if (response.statusCode === 200) next();
+    else res.status(response.statusCode === 401 ? 401 : 403).json({
+      detail: response.statusCode === 401 ? '需要登录' : '当前账号没有调试权限',
+    });
+  });
+  check.on('timeout', () => check.destroy());
+  check.on('error', () => {
+    if (!res.headersSent) res.status(503).json({ detail: '登录服务暂时不可用，请稍后重试' });
+  });
+}
+
 // /bookarm-api/v1/... → BookArm /api/v1/... through its managed Unix socket.
 // LR_BOOKARM_TARGET is intentionally opt-in for an on-site legacy TCP daemon.
 app.use(
   '/bookarm-api',
+  authorizeBookarm,
   expressHttpProxy(LEGACY_BOOKARM_TARGET || 'localhost', bookarmProxyOptions()),
 );
 

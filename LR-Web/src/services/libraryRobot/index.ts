@@ -1,3 +1,4 @@
+import { authenticatedFetch, websocketAuthProtocols } from '../auth';
 import type {
   AlertRecord,
   Book,
@@ -28,7 +29,7 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
   const headers = new Headers(options.headers);
   if (options.body) headers.set('Content-Type', 'application/json');
 
-  const response = await fetch(path, { ...options, headers });
+  const response = await authenticatedFetch(path, { ...options, headers });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     const detail =
@@ -95,7 +96,7 @@ function robotRealtimeUrl() {
 
 function connectRobotRealtime() {
   if (!realtimeStarted || typeof window === 'undefined') return;
-  realtimeSocket = new WebSocket(robotRealtimeUrl());
+  realtimeSocket = new WebSocket(robotRealtimeUrl(), websocketAuthProtocols());
   realtimeSocket.onopen = () => updateRealtimeState({ connected: true });
   realtimeSocket.onmessage = (event) => {
     try {
@@ -282,7 +283,7 @@ export async function importBooks(
 
 /** Download the library backup (books + maps + annotations + spine listing). */
 export async function exportLibraryBackup(): Promise<void> {
-  const response = await fetch('/api/v1/library/export', { cache: 'no-store' });
+  const response = await authenticatedFetch('/api/v1/library/export', { cache: 'no-store' });
   if (!response.ok) throw new Error(`无法导出备份（${response.status}）`);
   const disposition = response.headers.get('content-disposition') ?? '';
   const match = /filename="?([^";]+)"?/.exec(disposition);
@@ -381,7 +382,7 @@ export async function deleteLibraryMap(mapId: string): Promise<void> {
 }
 
 export async function getMapPreview(mapId: string): Promise<string> {
-  const response = await fetch(mapPreviewUrl(mapId));
+  const response = await authenticatedFetch(mapPreviewUrl(mapId));
   if (!response.ok) throw new Error(`无法读取地图预览（${response.status}）`);
   return URL.createObjectURL(await response.blob());
 }
@@ -616,7 +617,7 @@ export function mappingSnapshotUrl(robotId: string) {
 }
 
 async function getProtectedImage(url: string, label: string): Promise<string> {
-  const response = await fetch(url);
+  const response = await authenticatedFetch(url);
   if (!response.ok) throw new Error(`${label}（${response.status}）`);
   return URL.createObjectURL(await response.blob());
 }

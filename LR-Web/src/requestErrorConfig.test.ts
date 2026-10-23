@@ -237,8 +237,14 @@ describe('requestErrorConfig', () => {
   });
 
   describe('requestInterceptors', () => {
-    it('registers no interceptors: delivery mode sends no auth token', () => {
-      expect(errorConfig.requestInterceptors ?? []).toHaveLength(0);
+    it('attaches the logged-in session to framework requests', () => {
+      window.localStorage.setItem('lr-web-token', 'test-session');
+      const interceptor = errorConfig.requestInterceptors?.[0] as (config: any) => any;
+      expect(interceptor({ headers: { Accept: 'application/json' } }).headers).toEqual({
+        Accept: 'application/json', Authorization: 'Bearer test-session',
+      });
+      window.localStorage.removeItem('lr-web-token');
+      expect(interceptor({ headers: {} }).headers).toEqual({});
     });
   });
 });

@@ -1,5 +1,6 @@
 // Base path of the on-robot return service (FastAPI). It shares the takeout
 // service's dev proxy: /bookarm-api/ is rewritten to the service's /api/ prefix.
+import { authenticatedFetch } from '../auth';
 const RETURN_API_BASE = '/bookarm-api/v1/return';
 
 export type ReturnStageView = {
@@ -63,7 +64,7 @@ async function returnRequest<T>(
   const headers = new Headers(options.headers);
   // Never set Content-Type here: multipart bodies need the browser-generated boundary.
 
-  const response = await fetch(`${RETURN_API_BASE}${path}`, {
+  const response = await authenticatedFetch(`${RETURN_API_BASE}${path}`, {
     ...options,
     headers,
   });

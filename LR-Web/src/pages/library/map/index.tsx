@@ -1229,7 +1229,7 @@ export default function LibraryMapPage() {
         />
       ) : null}
       <Row gutter={[16, 16]}>
-        <Col xs={24} xl={{ flex: '0 0 300px' }}>
+        <Col xs={{ span: 24, order: 2 }} xl={{ flex: '0 0 300px', order: 1 }}>
           <Card
             title="车辆控制"
             size="small"
@@ -1371,10 +1371,16 @@ export default function LibraryMapPage() {
                 );
                 return (
                   <List.Item
-                    style={{ cursor: 'pointer', paddingInline: 4 }}
+                    style={{
+                      cursor: 'pointer',
+                      paddingInline: 4,
+                      flexWrap: 'wrap',
+                      gap: '8px 0',
+                    }}
                     onClick={() => setSelectedId(item.id)}
                   >
                     <List.Item.Meta
+                      style={{ flex: '1 0 100%', minWidth: 0 }}
                       avatar={
                         <FileImageOutlined
                           style={{
@@ -1513,7 +1519,12 @@ export default function LibraryMapPage() {
             />
           </Card>
         </Col>
-        <Col xs={24} xl={{ flex: '1 1 0' }} style={{ minWidth: 0 }}>
+        <Col
+          className="robot-map-workspace"
+          xs={{ span: 24, order: 1 }}
+          xl={{ flex: '1 1 0', order: 2 }}
+          style={{ minWidth: 0 }}
+        >
           <Collapse
             defaultActiveKey={['properties']}
             items={[
@@ -3147,13 +3158,14 @@ function MapScale({ map }: { map: MapVersion }) {
         border: '1px solid #d9e7f7',
         borderRadius: 8,
         display: 'flex',
-        gap: 16,
+        flexWrap: 'wrap',
+        gap: '10px 16px',
         justifyContent: 'space-between',
         marginTop: 12,
         padding: '9px 14px',
       }}
     >
-      <Space size={10}>
+      <Space size={10} style={{ flexShrink: 0 }}>
         <div style={{ display: 'flex', height: 18, width: 150 }}>
           {['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'].map(
             (key, index) => (
@@ -3172,7 +3184,11 @@ function MapScale({ map }: { map: MapVersion }) {
         </div>
         <Typography.Text strong>比例尺</Typography.Text>
       </Space>
-      <Space split={<span style={{ color: '#d9d9d9' }}>|</span>} wrap>
+      <Space
+        split={<span style={{ color: '#d9d9d9' }}>|</span>}
+        wrap
+        style={{ flex: '1 1 260px', minWidth: 0 }}
+      >
         <Typography.Text type="secondary">
           10 格 = {(gridSize * 10).toFixed(2)} m
         </Typography.Text>
@@ -3183,7 +3199,15 @@ function MapScale({ map }: { map: MapVersion }) {
           分辨率 {map.resolution.toFixed(3)} m / px
         </Typography.Text>
       </Space>
-      <Space size={8}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          flex: '0 1 300px',
+          minWidth: 0,
+        }}
+      >
         <span
           title="地图朝向：上方为 90 度，右侧为 0 度"
           style={{
@@ -3194,6 +3218,7 @@ function MapScale({ map }: { map: MapVersion }) {
             color: '#1677ff',
             display: 'inline-flex',
             fontSize: 16,
+            flexShrink: 0,
             height: 28,
             justifyContent: 'center',
             width: 28,
@@ -3204,7 +3229,7 @@ function MapScale({ map }: { map: MapVersion }) {
         <Typography.Text type="secondary">
           朝向：右 0° · 上 90° · 左 ±180° · 下 -90°
         </Typography.Text>
-      </Space>
+      </div>
     </div>
   );
 }

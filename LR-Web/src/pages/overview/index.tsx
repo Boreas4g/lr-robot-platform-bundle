@@ -1,4 +1,5 @@
 import BatteryStatus from '@/components/BatteryStatus';
+import { getCurrentUser, isMaintainer } from '@/services/auth';
 import {
   AlertOutlined,
   BranchesOutlined,
@@ -400,7 +401,7 @@ export default function OverviewPage() {
             重启全部
           </Button>
         </Popconfirm>,
-        debugMode ? (
+        isMaintainer(getCurrentUser()) ? debugMode ? (
           <Button
             key="debug-exit"
             danger
@@ -417,7 +418,7 @@ export default function OverviewPage() {
           >
             进入调试模式
           </Button>
-        ),
+        ) : null,
         <Button
           key="robots"
           type="primary"
@@ -655,7 +656,7 @@ export default function OverviewPage() {
                             hwStatus.arm.health?.joint_feedback?.[String(joint)]
                               ?.fault_code;
                           return (
-                            <Col flex="1 0 13%" key={joint}>
+                            <Col className="robot-joint-status" flex="1 0 13%" key={joint}>
                               <div
                                 style={{
                                   background:

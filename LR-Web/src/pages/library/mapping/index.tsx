@@ -599,7 +599,7 @@ export default function LibraryMappingPage() {
               {ANGULAR_SPEED} rad/s），松开自动停车；车端 0.6
               秒看门狗超时也会自动停车。
             </Typography.Paragraph>
-            <Space vertical size={8} style={{ marginTop: 16 }}>
+            <Space vertical size={8} style={{ marginTop: 16, width: '100%' }}>
               <Space wrap>
                 <Switch
                   checked={gamepadEnabled}
@@ -610,7 +610,7 @@ export default function LibraryMappingPage() {
                 {gamepadId ? (
                   <Tag color="success">已连接：{gamepadId}</Tag>
                 ) : (
-                  <Tag>
+                  <Tag style={{ whiteSpace: 'normal' }}>
                     未检测到手柄（请按下手柄任意按键激活；需用 localhost
                     打开页面）
                   </Tag>

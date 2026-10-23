@@ -163,6 +163,7 @@ class InMemoryStore:
         self.map_annotations: dict[str, list[MapAnnotation]] = {}
         self.users: dict[str, tuple[User, str]] = {}
         self.sessions: dict[str, User] = {}
+        self.session_expires: dict[str, float] = {}
         self.commands: dict[str, RobotCommand] = {}
         self.idempotency: dict[str, RobotCommand] = {}
         # Complete-takeout orchestration: one cancellation event per live task.
@@ -1048,6 +1049,7 @@ class InMemoryStore:
         token = secrets.token_urlsafe(32)
         with self._lock:
             self.sessions[token] = record[0]
+            self.session_expires[token] = time.time() + 86400
         if self.cache:
             self.cache.set_session(token, record[0].model_dump())
         return token, record[0]
@@ -1063,11 +1065,24 @@ class InMemoryStore:
         return user
 
     def user_for_token(self, token: str | None) -> User | None:
-        if self.cache and token:
+        if not token:
+            return None
+        if self.cache:
             cached = self.cache.get_session(token)
             if cached:
                 return User.model_validate(cached)
-        return self.sessions.get(token or "")
+            return None
+        if self.session_expires.get(token, 0) <= time.time():
+            self.sessions.pop(token, None)
+            self.session_expires.pop(token, None)
+            return None
+        return self.sessions.get(token)
+
+    def revoke_token(self, token: str) -> None:
+        self.sessions.pop(token, None)
+        self.session_expires.pop(token, None)
+        if self.cache:
+            self.cache.delete_session(token)
 
     def create_robot(self, robot_id: str, name: str, gateway_host: str, user: User) -> RobotSummary:
         robot_id = robot_id.strip().upper()
@@ -2992,7 +3007,7 @@ class InMemoryStore:
     def _can_manually_control(self, user: User) -> bool:
         if self.single_operator:
             return True
-        return user.role in {"系统管理员", "维护人员"}
+        return user.role in {"系统管理员", "维护人员", "图书馆操作员"}
 
     def reset_software_emergency_stop(
         self, robot_id: str, request: ResetEmergencyStopRequest, user: User

@@ -1,5 +1,6 @@
 // Base path of the on-robot takeout service (FastAPI). The dev proxy rewrites
 // /bookarm-api/ to the service's /api/ prefix; production needs a same-origin reverse proxy.
+import { authenticatedFetch } from '../auth';
 const TAKEOUT_API_BASE = '/bookarm-api/v1/takeout';
 
 export type TakeoutStageView = {
@@ -66,7 +67,7 @@ async function takeoutRequest<T>(
   const headers = new Headers(options.headers);
   // Never set Content-Type here: multipart bodies need the browser-generated boundary.
 
-  const response = await fetch(`${TAKEOUT_API_BASE}${path}`, {
+  const response = await authenticatedFetch(`${TAKEOUT_API_BASE}${path}`, {
     ...options,
     headers,
   });

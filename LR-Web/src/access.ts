@@ -1,12 +1,12 @@
-/**
- * Temporary single-operator access map.  Keep the standard Umi argument and
- * legacy canAdmin key for existing routes while every logged-in user debugs.
- */
-export default function access(_initialState?: unknown) {
+import { isMaintainer, type LocalUser } from './services/auth';
+
+export default function access(initialState?: { currentUser?: LocalUser }) {
+  const user = initialState?.currentUser;
   return {
-    canAdmin: true,
-    canDispatch: true,
-    canMaintain: true,
-    canConfigure: true,
+    canAdmin: user?.role === '系统管理员',
+    canDispatch: Boolean(user),
+    canMaintain: isMaintainer(user),
+    canConfigure: isMaintainer(user),
+    canDebug: isMaintainer(user),
   };
 }

@@ -1,0 +1,19 @@
+[Unit]
+Description=Library robot persistent Wi-Fi hotspot
+Wants=NetworkManager.service
+After=NetworkManager.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Environment=LR_UPSTREAM_WIFI=wlo1
+EnvironmentFile=-/etc/lr-platform/hotspot.env
+ExecStart=/usr/bin/python3 /home/boreas/lr-robot-platform-bundle/deploy/scripts/robot-hotspot.py
+Restart=always
+RestartPreventExitStatus=78
+RestartSec=10
+RuntimeDirectory=lr-hotspot
+RuntimeDirectoryMode=0750
+
+[Install]
+WantedBy=multi-user.target

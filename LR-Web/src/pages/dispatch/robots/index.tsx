@@ -238,7 +238,7 @@ export default function RobotControlPage() {
   const lastJogSentAtRef = useRef(0);
   const lastJogErrorAtRef = useRef(0);
   const canMaintain = Boolean(initialState?.currentUser);
-  const canResetSoftwareEmergencyStop = Boolean(initialState?.currentUser);
+  const canResetSoftwareEmergencyStop = initialState?.currentUser?.role === '系统管理员';
   const activeRobot = robots.find((robot) => robot.id === driveRobotId);
   const manualReady = Boolean(activeRobot);
   const driveBusy =
@@ -574,7 +574,7 @@ export default function RobotControlPage() {
         showIcon
         type="warning"
         title="安全手动控制"
-        description="仅维护人员可使用；最高 0.1 m/s、0.2 rad/s。页面按钮和键盘为按住移动、松开即停；键盘优先于手柄。网页失焦、隐藏或命令超时都将发送零速度，但危险情况必须优先按机器人硬件急停。"
+        description="登录后可使用低速控制；最高 0.1 m/s、0.2 rad/s。页面按钮和键盘为按住移动、松开即停；键盘优先于手柄。网页失焦、隐藏或命令超时都将发送零速度，但危险情况必须优先按机器人硬件急停。"
         style={{ marginBottom: 16 }}
       />
       {!canMaintain ? (

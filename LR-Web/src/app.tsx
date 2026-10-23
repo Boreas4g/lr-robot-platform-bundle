@@ -1,13 +1,14 @@
 import {
   BellOutlined,
   CloudServerOutlined,
+  LogoutOutlined,
   MoonOutlined,
   SunOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import type { Settings as LayoutSettings } from '@ant-design/pro-components';
 import type { RunTimeLayoutConfig } from '@umijs/max';
-import { history, Link, useModel } from '@umijs/max';
+import { history, useModel } from '@umijs/max';
 import {
   App,
   Avatar,
@@ -23,7 +24,14 @@ import {
 import React, { useEffect } from 'react';
 
 import defaultSettings from '../config/defaultSettings';
-import { getCurrentUser, type LocalUser } from './services/auth';
+import ResponsiveNavigation from './components/ResponsiveNavigation';
+import {
+  getCurrentUser,
+  isMaintainer,
+  refreshCurrentUser,
+  signOut,
+  type LocalUser,
+} from './services/auth';
 import { isDebugMode, isDebugPath } from './utils/debugMode';
 import {
   getAlerts,
@@ -62,11 +70,18 @@ function getLayoutSettings(themeMode: ThemeMode): Partial<LayoutSettings> {
 
 export async function getInitialState(): Promise<InitialStateType> {
   const themeMode = getThemeMode();
+  const currentUser = await refreshCurrentUser();
+  const { pathname, search = '' } = history.location;
+  if (pathname !== '/login' && !currentUser) {
+    history.replace(`/login?redirect=${encodeURIComponent(`${pathname}${search}`)}`);
+  } else if (pathname === '/login' && currentUser) {
+    history.replace('/overview/dashboard');
+  }
   return {
-    currentUser: getCurrentUser(),
+    currentUser,
     settings: getLayoutSettings(themeMode),
     themeMode,
-    fetchUserInfo: async () => getCurrentUser(),
+    fetchUserInfo: refreshCurrentUser,
     settingDrawerOpen: false,
   };
 }
@@ -204,8 +219,13 @@ function ControlStationStatus() {
             };
   return (
     <Tooltip title={status.help}>
-      <Tag color={status.color} icon={<CloudServerOutlined />}>
-        {status.label}
+      <Tag
+        className="robot-connection-status"
+        color={status.color}
+        icon={<CloudServerOutlined />}
+        aria-label={status.label}
+      >
+        <span className="robot-connection-label">{status.label}</span>
       </Tag>
     </Tooltip>
   );
@@ -247,7 +267,7 @@ function NotificationBell() {
           label: `${alert.title}（${alert.time}）`,
         }));
   return (
-    <Dropdown key="notifications" menu={{ items }}>
+    <Dropdown key="notifications" menu={{ items }} trigger={['click']}>
       <Badge count={unacknowledged.length} size="small">
         <Button type="text" icon={<BellOutlined />} aria-label="告警通知" />
       </Badge>
@@ -255,54 +275,72 @@ function NotificationBell() {
   );
 }
 
-export const layout: RunTimeLayoutConfig = ({ initialState }) => ({
-  title: '智巡-图书馆机器人',
-  logo: <CloudServerOutlined style={{ color: '#69b1ff', fontSize: 22 }} />,
-  menuItemRender: (item, dom) => {
-    // 调试中心整组菜单（含子项）仅在调试模式开启时显示
-    if (
-      !isDebugMode() &&
-      (item.key === 'debug' || (item.path && isDebugPath(item.path)))
-    ) {
-      return null;
-    }
-    return item.path ? <Link to={item.path}>{dom}</Link> : dom;
-  },
-  actionsRender: () => [
-    <ThemeToggle key="theme" />,
-    <ControlStationStatus key="control-station" />,
-    <NotificationBell key="notifications" />,
-  ],
-  avatarProps: {
-    render: () => (
-      <Dropdown
-        menu={{
-          items: [
-            {
-              key: 'role',
-              label: initialState?.currentUser?.role ?? '操作员',
-              disabled: true,
+function UserMenu({ currentUser }: { currentUser?: LocalUser }) {
+  return (
+    <Dropdown
+      trigger={['click']}
+      menu={{
+        items: [
+          {
+            key: 'role',
+            label: currentUser?.role ?? '操作员',
+            disabled: true,
+          },
+          { type: 'divider' },
+          {
+            key: 'logout',
+            icon: <LogoutOutlined />,
+            label: '退出登录',
+            onClick: async () => {
+              try {
+                await signOut();
+              } finally {
+                history.replace('/login');
+                window.location.reload();
+              }
             },
-          ],
-        }}
-      >
-        <Button type="text" className="user-menu-button">
-          <Avatar size={28} icon={<UserOutlined />} />
-          <span className="user-menu-details">
-            <Typography.Text className="user-menu-name">
-              {initialState?.currentUser?.name}
-            </Typography.Text>
-            <Typography.Text type="secondary" className="user-menu-role">
-              {initialState?.currentUser?.role}
-            </Typography.Text>
-          </span>
-        </Button>
-      </Dropdown>
-    ),
-  },
+          },
+        ],
+      }}
+    >
+      <Button type="text" className="user-menu-button" aria-label="账号菜单">
+        <Avatar size={28} icon={<UserOutlined />} />
+        <span className="user-menu-details">
+          <Typography.Text className="user-menu-name">
+            {currentUser?.name}
+          </Typography.Text>
+          <Typography.Text type="secondary" className="user-menu-role">
+            {currentUser?.role}
+          </Typography.Text>
+        </span>
+      </Button>
+    </Dropdown>
+  );
+}
+
+export const layout: RunTimeLayoutConfig = ({ initialState }) => ({
+  ...initialState?.settings,
+  title: '智巡-图书馆机器人',
+  className: 'robot-app-shell',
+  // Use a body-mounted Drawer on compact screens instead of the framework's
+  // inline mobile sider, whose mask scrolls away with long control pages.
+  menuRender: false,
+  headerRender: (props) => (
+    <ResponsiveNavigation
+      menuData={props.menuData}
+      canDebug={isMaintainer(initialState?.currentUser) && isDebugMode()}
+      actions={
+        <>
+          <span className="robot-header-theme"><ThemeToggle /></span>
+          <ControlStationStatus />
+          <NotificationBell />
+          <UserMenu currentUser={initialState?.currentUser} />
+        </>
+      }
+    />
+  ),
   footerRender: false,
   childrenRender: (children) => <AppTheme>{children}</AppTheme>,
-  ...initialState?.settings,
 });
 
 // 路由守卫：调试模式未开启时，调试中心相关地址一律退回运行总览
@@ -311,7 +349,13 @@ export function onRouteChange({
 }: {
   location: { pathname: string };
 }) {
-  if (!isDebugMode() && isDebugPath(location.pathname)) {
+  if (location.pathname === '/login') return;
+  const currentUser = getCurrentUser();
+  if (!currentUser) {
+    history.replace(`/login?redirect=${encodeURIComponent(location.pathname)}`);
+    return;
+  }
+  if (isDebugPath(location.pathname) && (!isMaintainer(currentUser) || !isDebugMode())) {
     history.replace('/overview/dashboard');
   }
 }

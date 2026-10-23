@@ -55,9 +55,9 @@ export default function AnnotationTargetSelect({
     }));
   }, [annotations, kindFilter, value]);
   return (
-    <Space.Compact>
+    <Space.Compact style={{ width: 328, maxWidth: '100%' }}>
       <Select
-        style={{ minWidth: 240 }}
+        style={{ minWidth: 0, flex: 1 }}
         placeholder="导航目标点（标注）"
         value={value}
         onChange={onChange}
@@ -68,7 +68,7 @@ export default function AnnotationTargetSelect({
         disabled={disabled}
       />
       <Select
-        style={{ width: 88 }}
+        style={{ width: 88, flex: '0 0 88px' }}
         value={kindFilter}
         onChange={setKindFilter}
         options={KIND_FILTER_OPTIONS}

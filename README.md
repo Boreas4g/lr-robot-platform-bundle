@@ -6,6 +6,8 @@
 
 ## 系统架构与代码分布
 
+用户从手机、平板或电脑连接机器人，请先阅读[图书馆机器人用户使用指南](docs/用户使用指南.md)。正式交付方式为连接车载热点“图书馆机器人”后访问 `http://192.168.4.1:8000`；热点目前尚未启用。当前维护入口仍为 `http://192.168.3.22:8000`。部署细节见[热点与访客访问](deploy/HOTSPOT-ACCESS.md)。
+
 ```
 浏览器 ──> :8000  lr-web-static.service    LR-Web/scripts/serve-static.cjs（静态托管 dist/ + 反代）
               ├─ /api,/health ──> :8080  lr-control-api.service   LR-Web/apps/control-api/（FastAPI）
@@ -51,7 +53,9 @@ lr-station-discovery.service ──> 局域网发现广播
 `~/project/lingzu_arm/`（bookarm 退役快照，落后 5 个提交）、`~/project/rod-motor-firmware/`（与 external 逐字节一致）、
 `LR-Web/lr-oneclick-deploy-20261008.tar.gz`（410M 旧部署归档，含凭据）。
 
-## 本机当前部署（2026-10-20）
+## 历史部署记录（2026-10-20）
+
+以下保留当时记录；当前访问方式以[用户使用指南](docs/用户使用指南.md)和[本机部署记录](deploy/LOCAL-DEPLOYMENT.md)为准。
 
 本机没有 root/sudo、Docker，也没有本 bundle 的 `lr-*` systemd 单元；控制站已按
 用户态方式运行：

@@ -1,0 +1,66 @@
+.robot-login {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 40px;
+  color: #172b4d;
+  background: radial-gradient(ellipse at 10% 0%, #dcecff 0, transparent 50%), #f0f5f9;
+  box-sizing: border-box;
+}
+.robot-login-shell { width: min(1080px, 100%); min-height: 660px; display: grid; grid-template-columns: 1.05fr 1fr; border-radius: 28px; overflow: hidden; background: #fff; box-shadow: 0 28px 90px #18477a14; border: 1px solid #fff; }
+.robot-login-intro { position: relative; display: flex; flex-direction: column; padding: 38px 42px; overflow: hidden; background: linear-gradient(145deg, #e9f3ff, #d9eaff 70%, #eaf4ff); }
+.robot-login-brand { display: flex; align-items: center; gap: 12px; font-size: 17px; font-weight: 600; }
+.robot-login-mark { display: grid; place-items: center; width: 40px; height: 40px; color: #fff; background: #1677ff; border-radius: 12px; font-size: 23px; box-shadow: 0 6px 14px #1677ff25; }
+.robot-login-story { margin-top: 64px; flex: 1; }
+.robot-login-eyebrow { color: #4876ad; font-size: 11px; letter-spacing: 4px; font-weight: 600; }
+.robot-login h1 { margin: 18px 0; font-size: clamp(30px, 3.2vw, 42px); line-height: 1.4; font-weight: 650; letter-spacing: -1px; }
+.robot-login-story p { max-width: 310px; color: #587293; line-height: 1.9; font-size: 14px; }
+.robot-login-connection { display: flex; align-items: center; gap: 9px; color: #52769f; font-size: 12px; line-height: 1.7; }
+.robot-login-illustration { position: relative; height: 180px; margin-top: 28px; }
+.robot-login-orbit { position: absolute; width: 250px; height: 95px; border: 1px dashed #83afe5; border-radius: 50%; transform: rotate(-16deg); bottom: 16px; left: 20px; }
+.robot-login-shelf { position: absolute; display: flex; align-items: flex-end; gap: 7px; left: 18px; top: 14px; padding: 0 8px 8px; border-bottom: 5px solid #8bb5e6; }
+.robot-login-shelf i { display: block; width: 17px; height: 50px; border-radius: 4px 4px 0 0; background: #a6c7ed; }
+.robot-login-shelf i:nth-child(2n) { height: 63px; background: #7baae5; }
+.robot-login-shelf i:last-child { transform: rotate(-12deg); margin-left: 6px; background: #c3d8f1; }
+.robot-login-robot { position: absolute; right: 48px; bottom: 28px; width: 88px; height: 104px; background: linear-gradient(#fff, #edf5ff); border: 1px solid #d1e1f4; border-radius: 23px 23px 16px 16px; box-shadow: 0 12px 22px #3a7bc022; text-align: center; padding-top: 17px; color: #1677ff; font-size: 39px; }
+.robot-login-robot span { display: block; margin: 8px auto; width: 34px; height: 5px; border-radius: 9px; background: #a5cbff; }
+.robot-login-robot b { position: absolute; width: 16px; height: 12px; background: #7694b5; border-radius: 4px; bottom: -7px; left: 13px; }
+.robot-login-robot b:last-child { left: auto; right: 13px; }
+.robot-login-dot { position: absolute; width: 11px; height: 11px; border-radius: 50%; background: #1677ff; left: 43px; bottom: 19px; box-shadow: 0 0 0 7px #1677ff12; }
+.robot-login-panel { display: flex; flex-direction: column; justify-content: center; padding: 60px 56px 28px; }
+.robot-login-form { margin: auto 0; padding-block: 28px; }
+.robot-login-welcome { font-size: 13px; color: #1677ff; font-weight: 600; margin-bottom: 12px; }
+.robot-login h2 { margin: 0 0 12px; font-size: 27px; line-height: 1.5; color: #172b4d; }
+.robot-login-description { color: #7b8b9e; font-size: 13px; margin: 0 0 32px; line-height: 1.8; }
+.robot-login .ant-form-item { margin-bottom: 22px; }
+.robot-login .ant-input-affix-wrapper { border-radius: 10px; min-height: 48px; background: #f7f9fc; border-color: #e6ebf2; }
+.robot-login .ant-input-prefix { margin-right: 11px; color: #91a2b6; }
+.robot-login .ant-btn-primary { margin-top: 8px; height: 48px; border-radius: 10px; font-weight: 500; box-shadow: 0 6px 14px #1677ff25; }
+.robot-login-error { margin-bottom: 20px; }
+.robot-login-features { display: flex; justify-content: center; gap: 20px; margin-top: 28px; color: #6e839e; font-size: 12px; }
+.robot-login-features span::before { content: ''; display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: #91bafa; margin-right: 6px; vertical-align: middle; }
+.robot-login-help { color: #97a4b4; font-size: 12px; line-height: 1.8; text-align: center; margin: 18px 0 0; }
+.robot-login footer { text-align: center; color: #a1adba; font-size: 11px; letter-spacing: 1px; margin-top: 24px; }
+@media (max-width: 760px) {
+  .robot-login { padding: 20px; align-items: start; }
+  .robot-login-shell { max-width: 480px; grid-template-columns: 1fr; min-height: 0; border-radius: 22px; }
+  .robot-login-intro { padding: 26px 28px 24px; }
+  .robot-login-story { margin-top: 26px; }
+  .robot-login h1 { font-size: 28px; margin: 10px 0; }
+  .robot-login h1 br { display: initial; }
+  .robot-login-story p { margin: 0 0 18px; max-width: 100%; font-size: 12px; }
+  .robot-login-eyebrow, .robot-login-illustration { display: none; }
+  .robot-login-panel { padding: 30px 28px 24px; }
+  .robot-login-form { padding: 0; }
+  .robot-login h2 { font-size: 23px; }
+  .robot-login-description { margin-bottom: 24px; }
+  .robot-login-features { gap: 14px; }
+}
+@media (max-width: 380px) {
+  .robot-login { padding: 10px; }
+  .robot-login-intro, .robot-login-panel { padding-inline: 22px; }
+  .robot-login-brand { font-size: 15px; }
+  .robot-login h1 { font-size: 24px; }
+  .robot-login-features { gap: 9px; }
+}

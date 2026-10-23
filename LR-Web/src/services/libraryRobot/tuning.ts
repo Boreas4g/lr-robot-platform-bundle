@@ -1,5 +1,6 @@
 // Base path of the on-robot tuning service (FastAPI). It shares the takeout
 // service's dev proxy: /bookarm-api/ is rewritten to the service's /api/ prefix.
+import { authenticatedFetch } from '../auth';
 const TUNING_API_BASE = '/bookarm-api/v1/tuning';
 
 /** Tuning flow discriminator: take-book / return-book / mid-return motion plan. */
@@ -96,7 +97,7 @@ async function tuningApiRequest<T>(
 ): Promise<T> {
   const headers = new Headers(options.headers);
 
-  const response = await fetch(url, {
+  const response = await authenticatedFetch(url, {
     ...options,
     headers,
   });

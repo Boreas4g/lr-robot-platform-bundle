@@ -19,6 +19,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { dismissBookarmRecovery, pollTasks } from '@/services/libraryRobot';
 import type { DispatchTask } from '@/services/libraryRobot/types';
 import { errorMessage } from '@/utils/errorText';
+import { getCurrentUser, isMaintainer } from '@/services/auth';
 
 /** Tasks in these states no longer transition on their own. */
 export const TERMINAL_STATES: DispatchTask['status'][] = [
@@ -207,7 +208,7 @@ export default function TaskProgressCard({
                         </Button>
                       </Popconfirm>
                     ) : null}
-                    <Link to="/debug/arm">前往机械臂调试页</Link>
+                    {isMaintainer(getCurrentUser()) ? <Link to="/debug/arm">前往机械臂调试页</Link> : null}
                   </Space>
                 </Space>
               }

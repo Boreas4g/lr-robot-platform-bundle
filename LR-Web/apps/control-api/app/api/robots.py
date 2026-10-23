@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ValidationError
 
 from ..config import get_settings
-from ..dependencies import get_current_user
+from ..dependencies import get_current_user, require_debug_access
 from ..schemas import (
     CreateMapAnnotationRequest,
     CreateRobotRequest,
@@ -39,7 +39,7 @@ from ..friendly_errors import describe_map_operation_failure
 from ..store import store
 
 router = APIRouter(prefix="/api/v1", tags=["robots"])
-# 免鉴权直控路由：main.py 挂载时不附带登录依赖（局域网单人调试，用户明确要求）。
+# Kept as a separate router for compatibility; main.py enforces login on both.
 open_router = APIRouter(prefix="/api/v1", tags=["robots"])
 settings = get_settings()
 
@@ -256,7 +256,7 @@ def reset_software_emergency_stop(
     "/robots/{robot_id}/manual-control/jog", response_model=RobotCommand, status_code=status.HTTP_202_ACCEPTED
 )
 def send_manual_jog(robot_id: str, request: ManualJogRequest) -> RobotCommand:
-    # 免鉴权直控：局域网单人调试，点动指令不附带租约、不做用户门控。
+    # The router requires login; the existing bounded jog protocol stays unchanged.
     if not any(item.id == robot_id for item in store.robots):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="机器人不存在")
     try:
@@ -266,7 +266,7 @@ def send_manual_jog(robot_id: str, request: ManualJogRequest) -> RobotCommand:
 
 
 @router.post("/robots/{robot_id}/lift/move", response_model=RobotCommand, status_code=status.HTTP_202_ACCEPTED)
-def move_lift(robot_id: str, request: MoveLiftRequest, user: User = Depends(get_current_user)) -> RobotCommand:
+def move_lift(robot_id: str, request: MoveLiftRequest, user: User = Depends(require_debug_access)) -> RobotCommand:
     try:
         return store.move_lift(robot_id, request, user)
     except PermissionError as error:

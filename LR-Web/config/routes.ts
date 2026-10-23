@@ -1,4 +1,5 @@
 export default [
+  { path: '/login', component: './login', layout: false },
   // Landing redirect must precede the '/'-pathed menu groups: react-router
   // breaks path ties by definition order.
   { path: '/', redirect: '/overview/dashboard' },
@@ -70,6 +71,7 @@ export default [
   {
     path: '/',
     key: 'debug',
+    access: 'canDebug',
     name: '调试中心',
     icon: 'tool',
     prerender: false,

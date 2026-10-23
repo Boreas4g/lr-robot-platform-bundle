@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { websocketAuthProtocols } from '../auth';
 import { apiRequest } from './index';
 
 export type BatteryTelemetry = {
@@ -65,7 +66,7 @@ function realtimeUrl() {
 
 function connect() {
   if (!started) return;
-  const current = new WebSocket(realtimeUrl());
+  const current = new WebSocket(realtimeUrl(), websocketAuthProtocols());
   socket = current;
   current.onmessage = (event) => {
     if (socket !== current || !started) return;

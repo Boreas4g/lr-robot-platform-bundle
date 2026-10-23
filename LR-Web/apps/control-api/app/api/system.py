@@ -144,7 +144,7 @@ def _check_operator(user: User, label: str) -> None:
     # open.  Authentication remains unchanged; role hardening is deferred.
     from ..store import store
 
-    if not store.single_operator and user.role != "系统管理员":
+    if not store.single_operator and user.role not in {"系统管理员", "图书馆操作员"}:
         raise HTTPException(status_code=403, detail="仅系统管理员可执行%s" % label)
 
 

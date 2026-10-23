@@ -2,9 +2,10 @@
  * 调试模式开关：进入需密码，退出后调试中心菜单与页面全部隐藏。
  *
  * 说明：这是纯前端显示开关（密码明文打包在前端 bundle 中），用于避免
- * 现场人员误入调试页，不构成安全边界；真正的代码保护在服务端编译层。
+ * 现场人员误入调试页，不构成安全边界；调试接口权限由服务端账号认证校验。
  */
 import { useEffect, useState } from 'react';
+import { getCurrentUser, isMaintainer } from '../services/auth';
 
 const DEBUG_MODE_KEY = 'lr-debug-mode';
 const DEBUG_MODE_EVENT = 'lr-debug-mode-changed';
@@ -12,6 +13,7 @@ const DEBUG_PASSWORD = 'LR123456';
 
 export function isDebugMode(): boolean {
   if (typeof window === 'undefined') return false;
+  if (!isMaintainer(getCurrentUser())) return false;
   return window.localStorage.getItem(DEBUG_MODE_KEY) === '1';
 }
 
@@ -20,6 +22,7 @@ export function verifyDebugPassword(input: string): boolean {
 }
 
 export function setDebugMode(on: boolean): void {
+  if (on && !isMaintainer(getCurrentUser())) return;
   if (on) {
     window.localStorage.setItem(DEBUG_MODE_KEY, '1');
   } else {

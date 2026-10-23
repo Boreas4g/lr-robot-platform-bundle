@@ -2,6 +2,7 @@ import type { RequestConfig } from '@umijs/max';
 import { getIntl } from '@umijs/max';
 import { message, notification } from 'antd';
 import { errorMessage } from './utils/errorText';
+import { getAuthToken } from './services/auth';
 
 // 错误处理方案： 错误类型
 enum ErrorShowType {
@@ -102,8 +103,11 @@ export const errorConfig: RequestConfig = {
     },
   },
 
-  // 请求拦截器（交付态无登录，请求头不携带 token）
-  requestInterceptors: [],
+  requestInterceptors: [(config: any) => {
+    const token = getAuthToken();
+    if (token) config.headers = { ...config.headers, Authorization: `Bearer ${token}` };
+    return config;
+  }],
 
   // 响应拦截器
   responseInterceptors: [],

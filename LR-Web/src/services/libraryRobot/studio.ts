@@ -1,5 +1,6 @@
 // Base path of the on-robot spine-studio service (FastAPI). It shares the
 // takeout service's dev proxy: /bookarm-api/ is rewritten to the service's /api/ prefix.
+import { authenticatedFetch } from '../auth';
 const STUDIO_API_BASE = '/bookarm-api/v1/studio';
 
 export type LiftHeightView = {
@@ -108,7 +109,7 @@ async function studioRequest<T>(
 ): Promise<T> {
   const headers = new Headers(options.headers);
 
-  const response = await fetch(`${STUDIO_API_BASE}${path}`, {
+  const response = await authenticatedFetch(`${STUDIO_API_BASE}${path}`, {
     ...options,
     headers,
   });
@@ -197,7 +198,7 @@ function libraryImagePath(id: string) {
 async function getProtectedImage(url: string, label: string): Promise<string> {
   // Debug images are overwritten in place on every run; bypass the HTTP cache
   // so the page always shows the latest attempt.
-  const response = await fetch(url, { cache: 'no-store' });
+  const response = await authenticatedFetch(url, { cache: 'no-store' });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new StudioApiError(
