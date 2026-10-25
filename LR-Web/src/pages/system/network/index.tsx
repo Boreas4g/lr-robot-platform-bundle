@@ -21,6 +21,8 @@ import {
   connectWifi,
   getNetworkStatus,
   isNetworkPending,
+  isScanPending,
+  type ScanOperation,
   type NetworkConnect,
   type NetworkOperation,
   type NetworkStatus,
@@ -54,12 +56,15 @@ const networkUrl = (ip: string) => `http://${ip}:8000/system/network`;
 
 export default function NetworkPage() {
   const { styles } = useStyles();
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [form] = Form.useForm();
   const [status, setStatus] = useState<NetworkStatus>();
   const [selected, setSelected] = useState('');
   const [networks, setNetworks] = useState<WifiNetwork[]>([]);
   const [scanNote, setScanNote] = useState('');
+  const [scanOperation, setScanOperation] = useState<ScanOperation>();
+  const [scannedAt, setScannedAt] = useState<number | null>(null);
+  const scanInFlight = useRef(false);
   const [error, setError] = useState('');
   const [switchError, setSwitchError] = useState<SwitchError>();
   const [loading, setLoading] = useState(true);
@@ -75,7 +80,8 @@ export default function NetworkPage() {
   const refreshInFlight = useRef(false);
   const submitInFlight = useRef(false);
   const security = Form.useWatch('security', form);
-  const pending = isNetworkPending(operation);
+  const scanPending = isScanPending(scanOperation);
+  const pending = isNetworkPending(operation) || scanPending;
   const device = status?.devices.find((d) => d.interface === selected);
 
   const refresh = useCallback(async () => {
@@ -84,6 +90,7 @@ export default function NetworkPage() {
     try {
       const value = await getNetworkStatus();
       setStatus(value);
+      setScanOperation(value.scan_operation || undefined);
       setSelected((current) =>
         value.devices.some((d) => d.interface === current)
           ? current
@@ -115,22 +122,38 @@ export default function NetworkPage() {
   }, [operation]);
 
   const scan = useCallback(async (name: string, rescan: boolean) => {
-    if (!name) return;
+    if (!name || scanInFlight.current) return;
+    scanInFlight.current = true;
     setScanning(true);
     try {
-      const result = await scanWifi(name, rescan);
+      const result = await scanWifi(name, rescan, rescan ? networkRequestId() : undefined);
       setNetworks(result.networks);
       setScanNote(result.message);
+      setScannedAt(result.scanned_at);
+      setScanOperation(result.scan_operation || undefined);
     } catch (e) {
       setScanNote(explain(e));
     } finally {
       setScanning(false);
+      scanInFlight.current = false;
     }
   }, []);
   useEffect(() => {
     setNetworks([]);
     void scan(selected, false);
-  }, [selected, scan]);
+  }, [selected, scan, scanOperation?.id, scanOperation?.phase]);
+
+  function requestSearch() {
+    modal.confirm({
+      title: '重新搜索附近 Wi-Fi',
+      content: device?.mode === 'ap'
+        ? '搜索时会暂时关闭机器人热点，完成后恢复原名称和密码。请等待约半分钟；必要时在手机设置中重新连接热点，再返回本页。搜索失败会保留上次列表。'
+        : '将更新附近 Wi-Fi 列表。搜索期间暂不能切换网络，请先确认机器人已停止作业。',
+      okText: '开始搜索',
+      cancelText: '取消',
+      onOk: () => scan(selected, true),
+    });
+  }
 
   function choose(network?: WifiNetwork, ap?: { uuid: string; ssid: string }) {
     form.resetFields();
@@ -266,11 +289,21 @@ export default function NetworkPage() {
             action={<Button onClick={() => setSwitchError(undefined)}>知道了</Button>}
           />
         )}
+        {scanOperation && (
+          <Alert
+            type={scanOperation.phase === 'recovery_required' || scanOperation.phase === 'failed' ? 'warning' : 'info'}
+            showIcon
+            title={scanOperation.message}
+            description={scanPending && scanOperation.hotspot
+              ? `请等待并重新连接“${scanOperation.ssid}”，然后返回本页。后台会继续执行，不需要保持网页在线。`
+              : undefined}
+          />
+        )}
         {operation && (
           <Card
-            title={pending ? '连接交接' : '最近一次切换'}
+            title={isNetworkPending(operation) ? '连接交接' : '最近一次切换'}
             extra={
-              pending ? (
+              isNetworkPending(operation) ? (
                 <Tag color="processing">
                   {seconds > 0 ? `${seconds} 秒内确认` : '等待恢复结果'}
                 </Tag>
@@ -289,7 +322,7 @@ export default function NetworkPage() {
                 }
                 title={operation.message}
               />
-              {pending && (
+              {isNetworkPending(operation) && (
                 <>
                   <ol className={styles.steps}>
                     <li>
@@ -363,9 +396,9 @@ export default function NetworkPage() {
                 icon={<ReloadOutlined />}
                 loading={scanning}
                 disabled={!selected || pending || submitting}
-                onClick={() => void scan(selected, true)}
+                onClick={requestSearch}
               >
-                刷新
+                重新搜索
               </Button>
             }
           >
@@ -389,6 +422,9 @@ export default function NetworkPage() {
                 手动添加网络
               </Button>
             </div>
+            <Typography.Paragraph type="secondary">
+              {scannedAt ? `最近扫描：${new Date(scannedAt * 1000).toLocaleString()}。列表可能随位置变化，请按需重新搜索。` : '尚无成功扫描记录，可点击“重新搜索”或手动添加网络。'}
+            </Typography.Paragraph>
             {scanNote && <Alert type="info" title={scanNote} showIcon />}
             {status &&
               (!status.wireless_enabled || !status.hardware_enabled) && (
@@ -404,7 +440,7 @@ export default function NetworkPage() {
                   description={
                     loading
                       ? '正在读取网络'
-                      : '暂无网络，刷新列表或手动添加 Wi-Fi'
+                      : '暂无网络，重新搜索或手动添加 Wi-Fi'
                   }
                 />
               )}

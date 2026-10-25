@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import socketserver
+import subprocess
 import threading
 import time
 import uuid
@@ -26,12 +27,53 @@ PROPS = 'org.freedesktop.DBus.Properties'
 ROLLBACK_SECONDS = 300
 SWITCH_DELAY = 5
 BUSY = {'scheduled', 'connecting', 'awaiting_confirmation', 'confirming', 'restoring'}
+SCAN_BUSY = {'scheduled', 'scanning', 'restoring', 'recovery_required'}
+SCAN_RECOVERY_SECONDS = 90
+STATE_DIR = Path('/var/lib/lr-network-agent')
 
 
 class NetworkError(Exception):
     def __init__(self, message, status=400):
         super().__init__(message)
         self.status = status
+
+
+def atomic_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
+    try:
+        with temporary.open('x', encoding='utf-8') as stream:
+            os.chmod(temporary, 0o600)
+            json.dump(value, stream, ensure_ascii=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+class ScanCache:
+    def __init__(self, directory=STATE_DIR):
+        self.directory = Path(directory)
+
+    def path(self, interface):
+        if not isinstance(interface, str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,15}', interface):
+            raise NetworkError('无线网卡名称不合法')
+        return self.directory / ('scan-' + interface + '.json')
+
+    def read(self, interface):
+        try:
+            data = json.loads(self.path(interface).read_text())
+            if isinstance(data['networks'], list) and isinstance(data['scanned_at'], (int, float)):
+                return data
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        return {'networks': [], 'scanned_at': None}
+
+    def save(self, interface, networks):
+        data = {'networks': networks, 'scanned_at': time.time()}
+        atomic_json(self.path(interface), data)
+        return data
 
 
 def checked_request(data):
@@ -153,12 +195,20 @@ class NetworkManager:
         path, device = self.device(interface)
         active = self.active(device.get('ActiveConnection', '/'))
         current = self.settings(active['Connection']).get('802-11-wireless', {}) if active else {}
-        # Off-channel scanning in AP mode can disrupt associated clients. Show
-        # NM's cached results and offer manual SSID entry instead.
         ap_mode = current.get('mode') == 'ap'
-        if refresh and not ap_mode:
-            self.interface(path, NM + '.Device.Wireless').RequestScan(self.dbus.Dictionary({}, signature='sv'), timeout=10)
-            time.sleep(2)
+        if refresh:
+            if ap_mode:
+                raise NetworkError('请使用重新搜索流程，热点运行期间不直接扫描', 409)
+            before = int(self.properties(path, NM + '.Device.Wireless').get('LastScan', -1))
+            self.interface(path, NM + '.Device.Wireless').RequestScan(
+                self.dbus.Dictionary({}, signature='sv'), timeout=5)
+            # RequestScan only accepts the request; LastScan confirms completion.
+            for _ in range(16):
+                time.sleep(0.5)
+                if int(self.properties(path, NM + '.Device.Wireless').get('LastScan', -1)) > before:
+                    break
+            else:
+                raise NetworkError('扫描超时，保留上次结果', 503)
         networks = {}
         for ap in self.interface(path, NM + '.Device.Wireless').GetAllAccessPoints(timeout=10):
             a = self.properties(ap, NM + '.AccessPoint')
@@ -171,14 +221,33 @@ class NetworkManager:
             item = {'ssid': ssid, 'security': security, 'signal': int(a.get('Strength', 0)), 'frequency': int(a.get('Frequency', 0))}
             if key not in networks or item['signal'] > networks[key]['signal']:
                 networks[key] = item
-        return {'networks': sorted(networks.values(), key=lambda a: -a['signal']), 'cached': ap_mode,
-                'message': '当前网卡正在提供热点，仅显示缓存网络；未列出时请手动填写 Wi-Fi 名称。' if ap_mode else ''}
+        return {'networks': sorted(networks.values(), key=lambda a: -a['signal']),
+                'cached': not refresh, 'message': ''}
 
-    def checkpoint(self, interface):
+    def checkpoint(self, interface, seconds=ROLLBACK_SECONDS):
         path, _ = self.device(interface)
-        # Flags 0 restrict rollback to this existing device and do not globally
-        # delete profiles created by unrelated desktop/network operations.
-        return str(self.manager.CheckpointCreate([path], self.dbus.UInt32(ROLLBACK_SECONDS), self.dbus.UInt32(0), timeout=10))
+        return str(self.manager.CheckpointCreate([path], self.dbus.UInt32(seconds), self.dbus.UInt32(0), timeout=10))
+
+    def disconnect_for_scan(self, interface):
+        path, _ = self.device(interface)
+        # Disconnect also inhibits autoconnection until explicit activation or rollback.
+        self.interface(path, NM + '.Device').Disconnect(timeout=5)
+        for _ in range(20):
+            _, device = self.device(interface)
+            if int(device['State']) == 30:
+                return
+            time.sleep(0.5)
+        raise NetworkError('网卡未进入待扫描状态', 503)
+
+    def current_profile(self, interface):
+        _, device = self.device(interface)
+        active = self.active(device.get('ActiveConnection', '/'))
+        return str(active.get('Connection', '/'))
+
+    def profile_ready(self, interface, profile):
+        _, device = self.device(interface)
+        return (int(device['State']) == 100 and self.current_profile(interface) == profile
+                and bool(self.ips(device)))
 
     def activate(self, data):
         d = self.dbus
@@ -263,23 +332,129 @@ class NetworkManager:
 
 
 class NetworkController:
-    def __init__(self, factory=NetworkManager, *, clock=time.time, sleep=time.sleep):
+    def __init__(self, factory=NetworkManager, *, clock=time.time, sleep=time.sleep, cache=None, recovery_file=None):
         self.factory, self.clock, self.sleep = factory, clock, sleep
         self.lock = threading.RLock()
         self.operation = None
         self.checkpoint = self.connection = None
         self.new_connection = False
         self.active_connection = None
+        self.cache = cache or ScanCache()
+        self.scan_operation = None
+        self.recovery_file = recovery_file
+        if recovery_file and recovery_file.exists():
+            self.scan_operation = json.loads(recovery_file.read_text())
+            self.scan_operation.update(phase='recovery_required', message='扫描服务曾中断，正在等待原连接恢复。')
 
     def status(self):
         status = self.factory().status()
         with self.lock:
+            self._check_scan_recovery()
             status['operation'] = copy.deepcopy(self.operation)
+            status['scan_operation'] = copy.deepcopy(self.scan_operation)
         return status
+
+    def _check_scan_recovery(self):
+        op = self.scan_operation
+        if op and op['phase'] == 'recovery_required':
+            if self.factory().profile_ready(op['interface'], op['profile']):
+                op.update(phase='failed', message='原连接已恢复；上次搜索未完成，可重新搜索。')
+                if self.recovery_file:
+                    self.recovery_file.unlink(missing_ok=True)
+
+    def scan(self, interface, refresh=False, acknowledged=False, request_id=None):
+        with self.lock:
+            self._check_scan_recovery()
+            if self.operation and self.operation['phase'] in BUSY | {'recovery_required'}:
+                raise NetworkError('网络切换或恢复期间暂不搜索', 409)
+            manager = self.factory()
+            manager.device(interface)
+            cached = self.cache.read(interface)
+            result = dict(cached, cached=True, message='列表为最近一次扫描结果；重新搜索会更新附近 Wi-Fi。')
+            if not refresh:
+                return dict(result, scan_operation=copy.deepcopy(self.scan_operation))
+            if self.scan_operation and self.scan_operation['phase'] in SCAN_BUSY:
+                if request_id and request_id == self.scan_operation['id'] and interface == self.scan_operation['interface']:
+                    return dict(result, scan_operation=copy.deepcopy(self.scan_operation))
+                raise NetworkError('正在搜索或恢复网络，请等待完成', 409)
+            if acknowledged is not True:
+                raise NetworkError('请先确认搜索期间可能暂时断开热点', 409)
+            try:
+                uuid.UUID(request_id)
+            except (ValueError, TypeError, AttributeError):
+                raise NetworkError('搜索请求编号不合法') from None
+            if self.scan_operation and request_id == self.scan_operation['id']:
+                return dict(result, scan_operation=copy.deepcopy(self.scan_operation))
+            status = manager.status()
+            device = next(d for d in status['devices'] if d['interface'] == interface)
+            if not status['wireless_enabled'] or not status['hardware_enabled']:
+                raise NetworkError('无线网卡已关闭')
+            profile = manager.current_profile(interface)
+            self.scan_operation = {'id': request_id, 'interface': interface, 'phase': 'scheduled',
+                                   'profile': profile, 'hotspot': device['mode'] == 'ap',
+                                   'ssid': device['ssid'], 'restore_at': self.clock() + SWITCH_DELAY + SCAN_RECOVERY_SECONDS,
+                                   'message': '5 秒后开始搜索；热点模式下会暂时断开，完成后请重新连接原热点。'}
+            if self.recovery_file:
+                atomic_json(self.recovery_file, self.scan_operation)
+            threading.Thread(target=self._rescan, args=(copy.deepcopy(self.scan_operation),), daemon=True).start()
+            return dict(result, scan_operation=copy.deepcopy(self.scan_operation))
+
+    def _rescan(self, op):
+        self.sleep(SWITCH_DELAY)
+        checkpoint = None
+        success = False
+        interrupted = False
+        manager = None
+        try:
+            manager = self.factory()
+            # A desktop/user change during the delay must not be disconnected.
+            if manager.current_profile(op['interface']) != op['profile']:
+                raise NetworkError('当前连接已变化')
+            with self.lock:
+                self.scan_operation.update(phase='scanning', message='正在搜索附近 Wi-Fi；请等待原热点恢复。')
+            if op['hotspot']:
+                checkpoint = manager.checkpoint(op['interface'], SCAN_RECOVERY_SECONDS)
+                interrupted = True
+                manager.disconnect_for_scan(op['interface'])
+            result = manager.scan(op['interface'], True)
+            self.cache.save(op['interface'], result['networks'])
+            success = True
+        except Exception:
+            pass  # Keep previous cache and never expose D-Bus/provider data.
+        finally:
+            restored = not interrupted
+            if interrupted:
+                with self.lock:
+                    self.scan_operation.update(phase='restoring', message='搜索结束，正在恢复原热点。')
+                try:
+                    manager.rollback(checkpoint)
+                    for _ in range(20):
+                        if manager.profile_ready(op['interface'], op['profile']):
+                            restored = True
+                            break
+                        self.sleep(1)
+                    if restored:
+                        manager.destroy(checkpoint)
+                except Exception:
+                    # Keep NetworkManager's independent timeout rollback armed.
+                    restored = False
+            with self.lock:
+                self.scan_operation.update(
+                    phase=('complete' if success else 'failed') if restored else 'recovery_required',
+                    message=('搜索完成，请查看更新后的列表。' if success else '搜索未完成，保留上次列表。') if restored
+                    else '原热点恢复尚未确认，正在等待自动恢复；请勿重复搜索。')
+                if self.recovery_file:
+                    if restored:
+                        self.recovery_file.unlink(missing_ok=True)
+                    else:
+                        atomic_json(self.recovery_file, self.scan_operation)
 
     def schedule(self, payload):
         data = checked_request(payload)
         with self.lock:
+            self._check_scan_recovery()
+            if self.scan_operation and self.scan_operation['phase'] in SCAN_BUSY:
+                raise NetworkError('正在搜索或恢复热点，请等待完成后再切换网络', 409)
             if self.operation and self.operation['id'] == data['request_id']:
                 return copy.deepcopy(self.operation)
             if self.operation and self.operation['phase'] in BUSY:
@@ -433,12 +608,10 @@ class Handler(BaseHTTPRequestHandler):
             if self.command == 'GET' and self.path == '/status':
                 payload = controller.status()
             elif self.command == 'POST' and self.path == '/scan':
-                if set(data) - {'interface', 'refresh'} or not isinstance(data.get('refresh', False), bool):
+                if set(data) - {'interface', 'refresh', 'acknowledged', 'request_id'} or not isinstance(data.get('refresh', False), bool):
                     raise NetworkError('扫描参数不合法')
-                with controller.lock:
-                    if controller.operation and controller.operation['phase'] in BUSY:
-                        raise NetworkError('切换期间请等待，暂不扫描', 409)
-                payload = controller.factory().scan(data.get('interface', ''), data.get('refresh', False))
+                payload = controller.scan(data.get('interface', ''), data.get('refresh', False),
+                                          data.get('acknowledged', False), data.get('request_id'))
             elif self.command == 'POST' and self.path == '/connect':
                 payload = controller.schedule(data)
             elif self.command == 'POST' and self.path == '/confirm':
@@ -482,7 +655,7 @@ def main():
         if not path.is_socket():
             raise RuntimeError('refusing to replace non-socket')
         path.unlink()
-    with Server(str(path), NetworkController()) as server:
+    with Server(str(path), NetworkController(recovery_file=Path('/run/lr-network-agent/scan-recovery.json'))) as server:
         server.serve_forever()
 
 

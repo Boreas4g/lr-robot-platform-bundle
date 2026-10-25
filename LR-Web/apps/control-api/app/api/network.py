@@ -50,6 +50,8 @@ class ScanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     interface: str = Field(pattern=r"^[A-Za-z0-9_.:-]{1,15}$")
     refresh: bool = False
+    acknowledged: bool = False
+    request_id: UUID | None = None
 
 
 class ConnectRequest(BaseModel):
@@ -107,7 +109,18 @@ def network_status(_: User = Depends(network_operator)):
 
 @router.post("/scan")
 def scan_networks(body: ScanRequest, _: User = Depends(network_operator)):
-    return agent_request("POST", "/scan", body.model_dump())
+    if body.refresh:
+        if not body.acknowledged or not body.request_id:
+            raise HTTPException(409, "请先确认搜索期间可能暂时断开热点")
+        require_network_idle()
+    return agent_request("POST", "/scan", body.model_dump(mode="json"))
+
+
+def require_network_idle():
+    if any(t.status == "running" for t in store.tasks) or any(
+        r.status in {"busy", "mapping", "navigating", "manual"} for r in store.robots
+    ):
+        raise HTTPException(409, "机器人仍在执行作业、导航、手动控制或建图；请先停止机器人再操作网络")
 
 
 @router.post("/connect", status_code=202)

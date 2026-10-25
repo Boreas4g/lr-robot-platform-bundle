@@ -498,7 +498,7 @@ def pack(baseline, destination):
 
 
 def enabled_units(p):
-    return CORE + (HARDWARE if p["hardware_autostart"] else []) + ["lr-bluetooth.timer"]
+    return CORE + (HARDWARE if p["hardware_autostart"] else []) + ["lr-bluetooth.timer"] + (["lr-wifi-boot-scan.service"] if p["hotspot"]["enabled"] else [])
 
 
 def hotspot_keyfile(p, connection_uuid):
@@ -530,7 +530,7 @@ def render_units(p):
     user = p["service_user"]
     group = service_group(p)
     units = {}
-    names = CORE + HARDWARE + ["lr-robot-mapping.service", "lr-bluetooth.service", "lr-bluetooth.timer"]
+    names = CORE + HARDWARE + ["lr-robot-mapping.service", "lr-bluetooth.service", "lr-bluetooth.timer", "lr-wifi-boot-scan.service"]
     for name in names:
         text = (ROOT / "deploy/systemd" / name).read_text()
         text = text.replace("/home/boreas/lr-robot-platform-bundle", str(ROOT))
@@ -790,6 +790,7 @@ def apply_profile(p, profile_path, *, install_deps, start):
     run(["visudo", "-cf", staged], capture=True)
     install("/etc/sudoers.d/lr-robot", sudoers, mode=0o440, owner=False)
     if p["hotspot"]["enabled"]:
+        install("/etc/lr-platform/wifi-scan.env", env_text({"LR_SCAN_INTERFACE": p["hotspot"]["interface"]}), mode=0o600, owner=False)
         install("/etc/NetworkManager/system-connections/lr-robot-hotspot.nmconnection",
                 hotspot_keyfile(p, private["hotspot_uuid"]), mode=0o600, owner=False)
         run(["systemctl", "enable", "NetworkManager.service"], capture=True)

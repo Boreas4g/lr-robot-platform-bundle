@@ -1,0 +1,19 @@
+[Unit]
+Description=Scan nearby Wi-Fi before starting the robot hotspot
+Before=NetworkManager.service
+After=systemd-udevd.service
+ConditionPathExists=/etc/lr-platform/wifi-scan.env
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/lr-platform/wifi-scan.env
+ExecStart=/usr/bin/python3 /usr/local/libexec/lr-wifi-boot-scan.py
+TimeoutStartSec=28
+TimeoutStopSec=3
+StateDirectory=lr-network-agent
+StateDirectoryMode=0700
+UMask=0077
+RemainAfterExit=yes
+
+[Install]
+WantedBy=NetworkManager.service

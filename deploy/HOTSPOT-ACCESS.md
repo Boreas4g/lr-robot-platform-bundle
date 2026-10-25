@@ -1,6 +1,6 @@
 # 热点、局域网与访客访问
 
-更新：2026-10-24。操作员可使用作业、地图与导航、系统；调试中心的页面和 API 仍受维护角色限制。操作步骤及 PDF 来源见[用户使用指南](../docs/用户使用指南.md)。
+更新：2026-10-25。操作员可使用作业、地图与导航、系统；调试中心的页面和 API 仍受维护角色限制。操作步骤及 PDF 来源见[用户使用指南](../docs/用户使用指南.md)。
 
 ## 两种接入方式
 
@@ -16,7 +16,7 @@
 ## 网页切换流程
 
 1. 确认机器人停止，没有执行中的作业、导航、手动控制或建图。历史排队、暂停记录不会单独阻止切换。
-2. 登录 8000 端口控制台，打开“系统 → 网络连接”，选择网卡和 Wi-Fi。热点模式只显示缓存网络，避免主动扫描打断现有终端；未列出的网络可手动添加。
+2. 登录 8000 端口控制台，打开“系统 → 网络连接”，选择网卡和 Wi-Fi。开机在 NetworkManager 启动前限时扫描并保存列表，随后自动开热点。页面显示最近一次扫描时间；“重新搜索”需确认短暂断开热点，后台扫描后恢复原热点，手机重新连接后自动读取新列表。扫描失败保留上次结果，也可手动添加。
 3. 输入目标密码，先保存名称入口，例如本机 `http://lr-control.local:8000/system/network`，并准备通过路由器查询 IP 的备用办法。
 4. 勾选提示后确认。服务先返回任务，再延迟约 5 秒切换，单网卡热点会暂时消失。
 5. 终端连接目标 Wi-Fi，点击页面“进入新网址”（优先跳转机器人在目标网络取得的新 IPv4 地址，`.local` 名称作备用），用原账号重新登录，在“系统 → 网络连接”点击“确认保留此连接”。只有经目标网卡的新地址访问才允许确认。提交被拒绝时页面会保留并显示原因，不会把旧排队/暂停记录误报成切换成功。
@@ -48,9 +48,17 @@ API 以普通服务用户运行；网络代理提供固定的状态、扫描、�
 
 ```bash
 sudo install -D -o root -g root -m 0755 deploy/libexec/lr-network-agent.py /usr/local/libexec/lr-network-agent.py
+sudo install -o root -g root -m 0755 deploy/libexec/lr-wifi-boot-scan.py /usr/local/libexec/lr-wifi-boot-scan.py
 sudo install -o root -g root -m 0644 deploy/systemd/lr-network-agent.service /etc/systemd/system/lr-network-agent.service
+sudo install -o root -g root -m 0644 deploy/systemd/lr-wifi-boot-scan.service /etc/systemd/system/lr-wifi-boot-scan.service
+# 按实际无线接口修改 wlo1；配置目录和文件仅 root 可写。
+sudo install -d -o root -g root -m 0755 /etc/lr-platform
+printf 'LR_SCAN_INTERFACE=wlo1\n' | sudo tee /etc/lr-platform/wifi-scan.env >/dev/null
+sudo chmod 0600 /etc/lr-platform/wifi-scan.env
 sudo systemctl daemon-reload
 sudo systemctl enable --now lr-network-agent.service avahi-daemon.service
+# 仅启用下次开机扫描，不在当前网络上启动。
+sudo systemctl enable lr-wifi-boot-scan.service
 # 按 LOCAL-DEPLOYMENT.md 构建前端后，重启前后端加载新版本。
 sudo systemctl restart lr-control-api.service lr-web-static.service
 ```
@@ -69,7 +77,7 @@ journalctl -u lr-network-agent.service -n 50 --no-pager
 ```
 
 - 页面报 503：检查代理、/usr/bin/python3 的 dbus 模块、socket 服务组是否与 API 用户匹配。
-- 显示恢复未完成：不要连发切换请求；等待 NetworkManager 检查点超时，现场检查后再重启代理清理状态。
+- 显示恢复未完成：不要连发切换请求；等待 NetworkManager 检查点超时，并现场检查原连接。扫描恢复记录在代理重启后仍保留，只有确认原连接恢复才解除阻止。
 - 新 IP 可登录但不能确认：用目标网卡地址的 8000 入口，避免 localhost、另一块网卡或直接 8080。
 - 切换后原 IP 不能访问：使用名称入口或查路由器 DHCP 客户端列表。
 - 服务正常但终端打不开：确认同网段可互访、访客隔离、TCP 8000；不要对外开放后端、ROS/DDS、MQTT 或机械臂端口。
@@ -85,3 +93,11 @@ Bluetooth 身份发现和配对由 lr-bluetooth.timer 维持，名称为“图�
 ## 验证范围
 
 自动测试模拟连接与恢复动作，涵盖权限、校验、幂等、错误密码、无 DHCP、超时恢复、错误入口拒绝确认及保存失败恢复；不连接或断开现场 Wi-Fi。真实跨网络切换、终端重连及冷启动重连仍需现场使用者在可恢复的条件下验收，不能用单元测试代替无线硬件验收。
+
+## 单网卡受控搜索（2026-10-25）
+
+热点运行期间禁止直接 RequestScan。普通列表读取不扫描；重新搜索需要登录、有权限、明确确认、机器人空闲及唯一请求 ID。后台延迟 5 秒执行，创建 90 秒 NetworkManager 检查点，断开热点并禁止自动抢连，等待 LastScan 更新后保存列表，然后恢复原热点并确认接口取得地址。服务崩溃时检查点仍由 NetworkManager 超时恢复；恢复未确认时阻止新的搜索和切换。
+
+开机单元 `lr-wifi-boot-scan.service` 在 NetworkManager 之前运行，最多等待约 28 秒，扫描失败也允许网络服务启动；仅对未连接、无 IP 的 managed 无线接口操作。`/etc/lr-platform/wifi-scan.env` 设置 `LR_SCAN_INTERFACE=wlo1`（迁移时写入实际接口）。扫描列表保存在 root 私有的 `/var/lib/lr-network-agent/scan-<接口>.json`，不包含密码；API 返回扫描时间，旧列表不会伪装成实时发现。运行中手工启动开机扫描脚本会拒绝操作。
+
+这套流程避免 AP 与主动扫描并行，但不证明 AX101 固件崩溃已修复。手机实际连接、重复搜索、错误密码恢复和冷启动仍需实机验收。

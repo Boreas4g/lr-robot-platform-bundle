@@ -128,3 +128,29 @@ def test_direct_remote_client_cannot_forge_confirmation(client, monkeypatch):
 def test_unavailable_agent_reports_503(client, monkeypatch):
     monkeypatch.setattr(get_settings(), "network_agent_socket", None)
     assert client.get("/api/v1/system/network").status_code == 503
+
+
+def test_search_requires_explicit_acknowledgement_and_id(client, monkeypatch):
+    monkeypatch.setattr(network, 'agent_request', lambda *_: pytest.fail('must not search'))
+    assert client.post('/api/v1/system/network/scan', json={'interface': 'wlo1', 'refresh': True}).status_code == 409
+
+
+def test_background_search_passes_id_and_acknowledgement(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(network, 'agent_request', lambda *args: calls.append(args) or {'networks': []})
+    request_id = str(uuid4())
+    response = client.post('/api/v1/system/network/scan', json={
+        'interface': 'wlo1', 'refresh': True, 'acknowledged': True, 'request_id': request_id})
+    assert response.status_code == 200
+    assert calls[0][2]['request_id'] == request_id
+    assert calls[0][2]['acknowledged'] is True
+
+
+def test_robot_movement_blocks_rescan_but_allows_reading_list(client, monkeypatch):
+    monkeypatch.setattr(store, 'robots', [SimpleNamespace(status='navigating')])
+    calls = []
+    monkeypatch.setattr(network, 'agent_request', lambda *args: calls.append(args) or {'networks': []})
+    assert client.post('/api/v1/system/network/scan', json={'interface': 'wlo1', 'refresh': True,
+        'acknowledged': True, 'request_id': str(uuid4())}).status_code == 409
+    assert not calls
+    assert client.post('/api/v1/system/network/scan', json={'interface': 'wlo1'}).status_code == 200

@@ -118,3 +118,29 @@ bash /home/boreas/lr-robot-platform-bundle/.local-deploy/20261016-212756/rollbac
 每秒更新。仅保留电量显示和满电校准；当前接线下充电器绕过 XT369，
 电量估算仅适用于校准后的纯放电过程。
 详见 [XT369-INTEGRATION.md](XT369-INTEGRATION.md)。
+
+## 单网卡 Wi-Fi 搜索更新（2026-10-25）
+
+已部署网络代理、API 和网页的受控搜索流程：网页读取持久化扫描列表，展示扫描时间；
+主动搜索需确认，热点模式下由后台临时断开热点、扫描并请求恢复原热点。
+扫描与连接切换互斥，扫描失败保留旧列表；NetworkManager 检查点提供独立的超时恢复。
+新增 `lr-wifi-boot-scan.service` 已启用，在下次开机时先扫描，再让 NetworkManager 启动热点。
+本次部署没有重启 NetworkManager，也没有切换当前 LR_5G 连接。
+
+已通过 50 项网络代理/部署测试、17 项 API 网络测试、TypeScript 检查和生产构建。
+运行中的代理在客户端模式下真实扫描到 11 个网络，网页 API 能读取持久化结果及时间；
+开机扫描脚本在 NetworkManager 已运行时拒绝操作。Chromium 手机尺寸检查确认列表、
+扫描时间和搜索确认弹窗正常显示，取消弹窗没有触发扫描。尚未执行冷启动、热点模式下的
+扫描恢复和手机重连验收；这些结果不能证明 AX101 固件问题已解决。
+
+本次安装前的代理、服务单元、API 网络模块和网页构建保存在：
+
+```text
+/home/boreas/lr-robot-platform-bundle/.local-deploy/wifi-controlled-scan-20261025-114839/
+```
+
+新文件包括 `/usr/local/libexec/lr-wifi-boot-scan.py`、
+`/etc/systemd/system/lr-wifi-boot-scan.service`、`/etc/lr-platform/wifi-scan.env`。
+若回退此功能，应先禁用开机扫描单元，再恢复备份中的网络代理、服务单元、API 模块
+和网页构建，重新加载 systemd 并重启网络代理及网页/API 服务；无需重启 NetworkManager。
+扫描缓存位于 `/var/lib/lr-network-agent/`，仅 root 可读写，不包含 Wi-Fi 密码。

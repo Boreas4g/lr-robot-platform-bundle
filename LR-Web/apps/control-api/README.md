@@ -53,7 +53,7 @@ npm run dev
 ## 已实现接口
 
 - `GET /api/v1/system/network`：当前 Wi-Fi、IPv4、名称入口、切换状态。
-- `POST /api/v1/system/network/scan`：读取可用 Wi-Fi；热点模式仅使用缓存。
+- `POST /api/v1/system/network/scan`：读取带时间戳的扫描列表；明确确认的刷新请求异步执行搜索，热点模式先断开再扫描并自动恢复。
 - `POST /api/v1/system/network/connect`：提交已确认的 Wi-Fi/热点切换，返回 202 后延迟执行。
 - `POST /api/v1/system/network/confirm`：通过目标网络的 8000 代理访问后保留连接；约 5 分钟未确认恢复原网络。
 

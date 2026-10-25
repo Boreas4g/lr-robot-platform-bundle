@@ -159,7 +159,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(a.checked_request(request(ssid='图书馆:5G; main', password='', security='open'))['security'], 'open')
         self.assertEqual(a.checked_request(request(password='a$;"\\ hello'))['password'], 'a$;"\\ hello')
 
-    def test_ap_scan_never_requests_active_rescan(self):
+    def test_ap_initial_scan_uses_cache_without_disruptive_rescan(self):
         manager = a.NetworkManager.__new__(a.NetworkManager)
         manager.device = Mock(return_value=('device', {'ActiveConnection': 'active'}))
         manager.active = Mock(return_value={'Connection': 'connection'})
@@ -167,8 +167,18 @@ class AgentTests(unittest.TestCase):
         iface = Mock()
         iface.GetAllAccessPoints.return_value = []
         manager.interface = Mock(return_value=iface)
-        self.assertTrue(manager.scan('wlan0', True)['cached'])
+        self.assertTrue(manager.scan('wlan0', False)['cached'])
         iface.RequestScan.assert_not_called()
+
+    def test_ap_direct_refresh_is_rejected_before_requesting_scan(self):
+        manager = a.NetworkManager.__new__(a.NetworkManager)
+        manager.device = Mock(return_value=('device', {'ActiveConnection': 'active'}))
+        manager.active = Mock(return_value={'Connection': 'connection'})
+        manager.settings = Mock(return_value={'802-11-wireless': {'mode': 'ap'}})
+        manager.interface = Mock()
+        with self.assertRaises(a.NetworkError):
+            manager.scan('wlan0', True)
+        manager.interface.assert_not_called()
 
 
 class ProfileTests(unittest.TestCase):

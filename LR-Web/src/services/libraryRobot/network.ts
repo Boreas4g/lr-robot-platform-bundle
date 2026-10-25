@@ -6,10 +6,17 @@ export type NetworkOperation = {
   id: string; phase: string; interface: string; ssid: string; message: string;
   rollback_at: number; addresses: string[]; local_url: string;
 };
+export type ScanOperation = {
+  id: string; interface: string; phase: string; hotspot: boolean;
+  ssid: string; restore_at: number; message: string;
+};
+export type ScanResult = { networks: WifiNetwork[]; cached: boolean; message: string; scanned_at: number | null; scan_operation?: ScanOperation | null };
+export const isScanPending = (operation?: ScanOperation | null) => Boolean(operation && ['scheduled', 'scanning', 'restoring', 'recovery_required'].includes(operation.phase));
 export type NetworkStatus = {
   wireless_enabled: boolean; hardware_enabled: boolean; local_url: string; rollback_seconds: number; switch_delay: number;
   devices: { interface: string; managed: boolean; state: number; mode: string; ssid: string; addresses: string[]; hotspots: { uuid: string; ssid: string }[] }[];
   operation: NetworkOperation | null;
+  scan_operation?: ScanOperation | null;
 };
 export type NetworkConnect = {
   request_id: string; interface: string; acknowledged: true;
@@ -17,8 +24,8 @@ export type NetworkConnect = {
 };
 const base = '/api/v1/system/network';
 export const getNetworkStatus = () => apiRequest<NetworkStatus>(base, { signal: AbortSignal.timeout(10000) });
-export const scanWifi = (name: string, refresh: boolean) => apiRequest<{ networks: WifiNetwork[]; cached: boolean; message: string }>(base + '/scan', {
-  method: 'POST', body: JSON.stringify({ interface: name, refresh }), signal: AbortSignal.timeout(20000),
+export const scanWifi = (name: string, refresh: boolean, requestId?: string) => apiRequest<ScanResult>(base + '/scan', {
+  method: 'POST', body: JSON.stringify({ interface: name, refresh, acknowledged: refresh, request_id: requestId }), signal: AbortSignal.timeout(20000),
 });
 export const connectWifi = (body: NetworkConnect) => apiRequest<NetworkOperation>(base + '/connect', {
   method: 'POST', body: JSON.stringify(body), signal: AbortSignal.timeout(25000),
