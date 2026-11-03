@@ -6,7 +6,7 @@ import math
 import struct
 import threading
 import time
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import rclpy
 from geometry_msgs.msg import Twist
@@ -109,6 +109,14 @@ def bytes_to_int16(high: int, low: int) -> int:
     return struct.unpack(">h", bytes([high, low]))[0]
 
 
+class MotorFeedback(NamedTuple):
+    motor_id: int
+    rpm: float
+    current_a: float
+    error_code: int
+    temperature_c: Optional[float] = None
+
+
 class DDSM115Rs485Bus:
     """Direct DDSM115 binary-protocol client over the HAT USB port or RS485."""
 
@@ -162,16 +170,18 @@ class DDSM115Rs485Bus:
         self,
         commands: Sequence[Dict[str, int]],
         gap_s: float,
-    ) -> List[Tuple[int, float]]:
+    ) -> List[MotorFeedback]:
         feedback = []
         for command in commands:
             motor_id = int(command["id"])
             rpm = max(-self.max_rpm, min(self.max_rpm, int(command["cmd"])))
             accel = int(command.get("act", 0)) & 0xFF
             reply = self.set_rpm(motor_id, rpm, accel)
+            extended_feedback = False
             if reply is None and self.feedback_request_on_timeout:
                 reply = self.request_feedback(motor_id)
-            parsed = self.parse_feedback(reply, motor_id)
+                extended_feedback = True
+            parsed = self.parse_feedback(reply, motor_id, extended_feedback)
             if parsed is not None:
                 feedback.append(parsed)
             if gap_s > 0.0:
@@ -197,7 +207,12 @@ class DDSM115Rs485Bus:
         self._write_frame(frame)
         return self._read_reply(motor_id)
 
-    def parse_feedback(self, reply: Optional[bytes], expected_id: int) -> Optional[Tuple[int, float]]:
+    def parse_feedback(
+        self,
+        reply: Optional[bytes],
+        expected_id: int,
+        extended_feedback: bool = False,
+    ) -> Optional[MotorFeedback]:
         if reply is None or len(reply) != 10:
             return None
         if reply[0] != expected_id or reply[1] != self.MODE_VELOCITY:
@@ -205,7 +220,10 @@ class DDSM115Rs485Bus:
         if crc8_maxim(reply[:9]) != reply[9]:
             return None
         rpm = float(bytes_to_int16(reply[4], reply[5]))
-        return expected_id, rpm
+        current_raw = bytes_to_int16(reply[2], reply[3])
+        current_a = current_raw * 8.0 / 32767.0
+        temperature_c = float(reply[6]) if extended_feedback else None
+        return MotorFeedback(expected_id, rpm, current_a, reply[8], temperature_c)
 
     def _write_frame(self, frame: bytes) -> None:
         if self.log_raw_tx:
@@ -354,6 +372,9 @@ class DDSMHatDiffDriveNode(Node):
         self._current_rpms = [0.0, 0.0, 0.0, 0.0]
         self._feedback_lock = threading.Lock()
         self._feedback_rpms: List[Optional[float]] = [None, None, None, None]
+        self._feedback_currents: List[Optional[float]] = [None, None, None, None]
+        self._feedback_errors: List[Optional[int]] = [None, None, None, None]
+        self._feedback_temperatures: List[Optional[float]] = [None, None, None, None]
         self._feedback_times = [0.0, 0.0, 0.0, 0.0]
         self._command_lock = threading.Lock()
         self._last_commanded_rpms = {motor_id: 0 for motor_id in self.motor_ids}
@@ -519,6 +540,9 @@ class DDSMHatDiffDriveNode(Node):
     def _clear_feedback(self) -> None:
         with self._feedback_lock:
             self._feedback_rpms = [None, None, None, None]
+            self._feedback_currents = [None, None, None, None]
+            self._feedback_errors = [None, None, None, None]
+            self._feedback_temperatures = [None, None, None, None]
             self._feedback_times = [0.0, 0.0, 0.0, 0.0]
 
     def _cmd_vel_callback(self, msg: Twist) -> None:
@@ -633,7 +657,7 @@ class DDSMHatDiffDriveNode(Node):
         except Exception as exc:  # pragma: no cover - shutdown best effort
             self.get_logger().warn(f"failed to stop motors during shutdown: {exc}")
 
-    def _send_batch(self, commands: List[Dict[str, int]]) -> List[Tuple[int, float]]:
+    def _send_batch(self, commands: List[Dict[str, int]]) -> List[MotorFeedback]:
         # HAT 固件在一次写入多条 JSON 时可能只返回最后一条命令的反馈。
         # 逐个电机发送并留出极短间隔，便于读取 1/2/3/4 四个电机的返回转速。
         with self._driver_lock:
@@ -645,16 +669,19 @@ class DDSMHatDiffDriveNode(Node):
             return []
         return driver.send_commands(commands, self.per_motor_command_gap)
 
-    def _apply_feedback(self, feedback: Sequence[Tuple[int, float]]) -> None:
+    def _apply_feedback(self, feedback: Sequence[MotorFeedback]) -> None:
         if not feedback:
             return
         now = time.monotonic()
         with self._feedback_lock:
-            for motor_id, rpm in feedback:
-                if motor_id not in self.motor_ids:
+            for sample in feedback:
+                if sample.motor_id not in self.motor_ids:
                     continue
-                index = self.motor_ids.index(motor_id)
-                self._feedback_rpms[index] = rpm
+                index = self.motor_ids.index(sample.motor_id)
+                self._feedback_rpms[index] = sample.rpm
+                self._feedback_currents[index] = sample.current_a
+                self._feedback_errors[index] = sample.error_code
+                self._feedback_temperatures[index] = sample.temperature_c
                 self._feedback_times[index] = now
 
     def _feedback_is_unhealthy(self) -> bool:
@@ -794,21 +821,51 @@ class DDSMHatDiffDriveNode(Node):
         now = time.monotonic()
         with self._command_lock:
             commanded_rpms = dict(self._last_commanded_rpms)
+        if not any(rpm != 0 for rpm in commanded_rpms.values()):
+            return
         with self._feedback_lock:
             feedback_rpms = list(self._feedback_rpms)
+            feedback_currents = list(self._feedback_currents)
+            feedback_errors = list(self._feedback_errors)
+            feedback_temperatures = list(self._feedback_temperatures)
             feedback_times = list(self._feedback_times)
 
         for index, motor_id in enumerate(self.motor_ids):
             published_rpm = int(commanded_rpms.get(motor_id, 0))
             returned_rpm = "无反馈"
+            current_text = "无反馈"
+            error_text = "无反馈"
+            temperature_text = "无反馈"
             if (
                 feedback_rpms[index] is not None
                 and now - feedback_times[index] <= self.feedback_timeout
             ):
-                returned_rpm = feedback_rpms[index]
+                returned_rpm = f"{feedback_rpms[index]:.1f}"
+                current_a = feedback_currents[index]
+                error_code = feedback_errors[index]
+                temperature_c = feedback_temperatures[index]
+                current_text = f"{current_a:.3f}" if current_a is not None else "未提供"
+                error_text = f"0x{error_code:02X}" if error_code is not None else "未提供"
+                temperature_text = (
+                    f"{temperature_c:.0f}" if temperature_c is not None else "未提供"
+                )
+                if error_code:
+                    labels = [
+                        label
+                        for bit, label in (
+                            (0x01, "传感器"),
+                            (0x02, "过流"),
+                            (0x04, "相过流"),
+                            (0x08, "堵转"),
+                            (0x10, "故障"),
+                        )
+                        if error_code & bit
+                    ]
+                    error_text += f"({','.join(labels)})"
             self.get_logger().info(
                 f"ID：{motor_id}，朝向：{self._direction_from_rpm(published_rpm)}，"
-                f"发布的转速：{published_rpm}，返回的转速：{returned_rpm}"
+                f"指令RPM：{published_rpm}，实际RPM：{returned_rpm}，"
+                f"电流A：{current_text}，温度C：{temperature_text}，错误码：{error_text}"
             )
 
     def _read_int_field(self, data: Dict[str, object], names: Tuple[str, ...]) -> Optional[int]:

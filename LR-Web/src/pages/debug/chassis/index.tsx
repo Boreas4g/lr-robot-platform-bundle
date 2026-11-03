@@ -43,6 +43,7 @@ import {
 import type { RobotSummary } from '@/services/libraryRobot/types';
 import { errorMessage } from '@/utils/errorText';
 import { RobotStatusTag } from '../../shared';
+import { directionalMotion, withMovingTurnRule } from './manualDrive';
 
 function ParamEditor({
   param,
@@ -131,11 +132,13 @@ function ManualDrivePanel() {
   const [driveEnabled, setDriveEnabled] = useState(false);
   const [linearSpeed, setLinearSpeed] = useState(0.1);
   const [angularSpeed, setAngularSpeed] = useState(0.2);
+  const [movingTurnOnly, setMovingTurnOnly] = useState(false);
   const [inputSource, setInputSource] = useState<DriveInputSource>('none');
 
   const driveRobotIdRef = useRef<string | undefined>(undefined);
   const linearSpeedRef = useRef(linearSpeed);
   const angularSpeedRef = useRef(angularSpeed);
+  const movingTurnOnlyRef = useRef(movingTurnOnly);
   const heldKeysRef = useRef(new Set<string>());
   const buttonDirectionRef = useRef<JogDirection | undefined>(undefined);
   const motionRef = useRef<{
@@ -209,18 +212,16 @@ function ManualDrivePanel() {
     [message],
   );
 
-  const jogValues = useCallback((direction: JogDirection) => {
-    switch (direction) {
-      case 'forward':
-        return { linear: linearSpeedRef.current, angular: 0 };
-      case 'backward':
-        return { linear: -linearSpeedRef.current, angular: 0 };
-      case 'left':
-        return { linear: 0, angular: angularSpeedRef.current };
-      case 'right':
-        return { linear: 0, angular: -angularSpeedRef.current };
-    }
-  }, []);
+  const jogValues = useCallback(
+    (direction: JogDirection) =>
+      directionalMotion(
+        direction,
+        linearSpeedRef.current,
+        angularSpeedRef.current,
+        movingTurnOnlyRef.current,
+      ),
+    [],
+  );
 
   const recomputeMotion = useCallback(() => {
     const heldKeys = heldKeysRef.current;
@@ -229,14 +230,15 @@ function ManualDrivePanel() {
     const left = heldKeys.has('a') || heldKeys.has('arrowleft');
     const right = heldKeys.has('d') || heldKeys.has('arrowright');
     if (forward || backward || left || right) {
+      const linear =
+        (forward ? linearSpeedRef.current : 0) +
+        (backward ? -linearSpeedRef.current : 0);
+      const angular =
+        (left ? angularSpeedRef.current : 0) +
+        (right ? -angularSpeedRef.current : 0);
       setMotion({
         source: 'keyboard',
-        linear:
-          (forward ? linearSpeedRef.current : 0) +
-          (backward ? -linearSpeedRef.current : 0),
-        angular:
-          (left ? angularSpeedRef.current : 0) +
-          (right ? -angularSpeedRef.current : 0),
+        ...withMovingTurnRule(linear, angular, movingTurnOnlyRef.current),
       });
       return;
     }
@@ -404,6 +406,23 @@ function ManualDrivePanel() {
             <Tag color="red">底盘健康检查未通过</Tag>
           ) : null}
           <span>
+            <Typography.Text type="secondary">控制方式：</Typography.Text>
+            <Select
+              style={{ minWidth: 220 }}
+              value={movingTurnOnly ? 'moving' : 'differential'}
+              onChange={(value: 'differential' | 'moving') => {
+                const enabled = value === 'moving';
+                movingTurnOnlyRef.current = enabled;
+                setMovingTurnOnly(enabled);
+              }}
+              options={[
+                { value: 'differential', label: '差速（允许原地转向）' },
+                { value: 'moving', label: '类阿克曼（行进转向）' },
+              ]}
+              disabled={driveEnabled}
+            />
+          </span>
+          <span>
             <Typography.Text type="secondary">线速度：</Typography.Text>
             <InputNumber
               style={{ width: 100 }}
@@ -415,9 +434,9 @@ function ManualDrivePanel() {
                 if (typeof value === 'number') {
                   linearSpeedRef.current = value;
                   setLinearSpeed(value);
+                  recomputeMotion();
                 }
               }}
-              disabled={driveEnabled}
             />
             <Typography.Text type="secondary"> m/s</Typography.Text>
           </span>
@@ -433,9 +452,9 @@ function ManualDrivePanel() {
                 if (typeof value === 'number') {
                   angularSpeedRef.current = value;
                   setAngularSpeed(value);
+                  recomputeMotion();
                 }
               }}
-              disabled={driveEnabled}
             />
             <Typography.Text type="secondary"> rad/s</Typography.Text>
           </span>
@@ -445,6 +464,11 @@ function ManualDrivePanel() {
             </Typography.Text>
           ) : null}
         </Space>
+        {movingTurnOnly ? (
+          <Typography.Text type="secondary">
+            线速度为零时不输出角速度；左右按钮自动带前进，键盘转向需同时按住前/后退。
+          </Typography.Text>
+        ) : null}
         {driveEnabled ? (
           <Space wrap size="middle">
             <Button
@@ -466,14 +490,14 @@ function ManualDrivePanel() {
               icon={<ArrowLeftOutlined />}
               {...holdButtonProps('left')}
             >
-              按住左转
+              {movingTurnOnly ? '按住前行左转' : '按住左转'}
             </Button>
             <Button
               size="large"
               icon={<ArrowRightOutlined />}
               {...holdButtonProps('right')}
             >
-              按住右转
+              {movingTurnOnly ? '按住前行右转' : '按住右转'}
             </Button>
             <Button size="large" icon={<StopOutlined />} onClick={stopMotion}>
               立即停止

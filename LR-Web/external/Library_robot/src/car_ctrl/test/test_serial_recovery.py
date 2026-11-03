@@ -32,6 +32,9 @@ def _node_for_recovery() -> DDSMHatDiffDriveNode:
     node._driver = None
     node._last_reconnect_attempt = float("-inf")
     node._feedback_rpms = [12.0, 12.0, 12.0, 12.0]
+    node._feedback_currents = [0.5, 0.5, 0.5, 0.5]
+    node._feedback_errors = [0, 0, 0, 0]
+    node._feedback_temperatures = [40.0, 40.0, 40.0, 40.0]
     node._feedback_times = [1.0, 1.0, 1.0, 1.0]
     node._current_rpms = [20.0, 20.0, 20.0, 20.0]
     node._target_rpms = [20.0, 20.0, 20.0, 20.0]
