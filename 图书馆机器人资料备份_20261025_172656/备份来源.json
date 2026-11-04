@@ -1,0 +1,65 @@
+{
+  "exported_at": "2026-10-25T17:26:56.508078+08:00",
+  "application_directory": "/home/boreas/lr-robot-platform-bundle/LR-Web/apps/control-api",
+  "database_export": "PostgreSQL REPEATABLE READ, READ ONLY transaction; selected map, annotations and all managed books only",
+  "selected_map_id": "MAP-BB36BE4791F2",
+  "selected_map_source": "/home/boreas/.local/state/lr-robot/active_map.json",
+  "selection_updated_at": "2026-09-26T08:47:08.132274+00:00",
+  "startup_fallback_map_id": "MAP-1813LAB",
+  "robot_map_records": [
+    {
+      "id": "LR-01",
+      "map_id": "MAP-BB36BE4791F2",
+      "map_version": "aoxiao_zoulang"
+    }
+  ],
+  "platform_map_directory": "/home/boreas/lr-robot-platform-bundle/LR-Web/apps/control-api/data/maps/MAP-BB36BE4791F2",
+  "vehicle_map_directory": "/var/lib/lr-robot/maps/MAP-BB36BE4791F2",
+  "platform_and_vehicle_map_files_identical": true,
+  "spine_library_directory": "/var/lib/lr-bookarm/spine_studio/library",
+  "map_annotation_count": 5,
+  "book_count": 5,
+  "spine_image_count": 5,
+  "source_files": [
+    {
+      "source": "/var/lib/lr-robot/maps/MAP-BB36BE4791F2/map.yaml",
+      "backup": "地图/map.yaml",
+      "sha256": "b0757af44975f81c955c3bcfe7eb2674e4b0947e87fd55b0dfaa3699002eeaac"
+    },
+    {
+      "source": "/var/lib/lr-robot/maps/MAP-BB36BE4791F2/map.pgm",
+      "backup": "地图/map.pgm",
+      "sha256": "bc08a216d32779c3850b4449ce08839d644133dcc1d35c177fc91a8c7d0265e7"
+    },
+    {
+      "source": "/home/boreas/lr-robot-platform-bundle/LR-Web/apps/control-api/data/maps/MAP-BB36BE4791F2/preview.png",
+      "backup": "地图/preview.png",
+      "sha256": "6829408c648b32c1d52e5087aec3a3ca72c6b5e7b804b9ea47ea688dcc5d0219"
+    },
+    {
+      "source": "/var/lib/lr-bookarm/spine_studio/library/bda80ef43ca24f099b9613d526b52e34.png",
+      "backup": "图书/书脊图/bda80ef43ca24f099b9613d526b52e34.png",
+      "sha256": "83a798f3c5a08148dbe7280d1302e6100ad8c1615c2036931044afcc255e905a"
+    },
+    {
+      "source": "/var/lib/lr-bookarm/spine_studio/library/c7b52177a08742e78cde8b40ff9df9b3.png",
+      "backup": "图书/书脊图/c7b52177a08742e78cde8b40ff9df9b3.png",
+      "sha256": "38df9669abe8fb34988ee6283173282c1680468263938d33c5904f2b54b193ac"
+    },
+    {
+      "source": "/var/lib/lr-bookarm/spine_studio/library/2c1133494a96413d84d43783a87670c8.png",
+      "backup": "图书/书脊图/2c1133494a96413d84d43783a87670c8.png",
+      "sha256": "cb6a3860d681263dc00a386e684f45471baa44b596a304dc1dec020678a534bf"
+    },
+    {
+      "source": "/var/lib/lr-bookarm/spine_studio/library/64133f0021dc47c2b0d804c4054238e3.png",
+      "backup": "图书/书脊图/64133f0021dc47c2b0d804c4054238e3.png",
+      "sha256": "8d7307a5182b69d9f3087d573623b6cb707a749ea96c838cb074c971aa849ee5"
+    },
+    {
+      "source": "/var/lib/lr-bookarm/spine_studio/library/494a242d2db949e299d9364483ad875a.png",
+      "backup": "图书/书脊图/494a242d2db949e299d9364483ad875a.png",
+      "sha256": "8fc2abdeac7fecb9752d9d22f66af8f3ab694ad9928ff5419d3a5598af8092e9"
+    }
+  ]
+}

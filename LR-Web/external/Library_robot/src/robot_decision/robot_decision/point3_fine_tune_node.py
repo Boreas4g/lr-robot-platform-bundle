@@ -11,8 +11,12 @@ from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import String
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformException, TransformListener
+
+from robot_decision.drive_control import ACKERMANN, DIFFERENTIAL, constrain_ackermann_velocity
 
 
 def normalize_angle(angle: float) -> float:
@@ -44,6 +48,17 @@ class Point3FineTuneNode(Node):
         self._load_config(self.points_file)
 
         self.cmd_vel_pub = self.create_publisher(Twist, self.cmd_vel_topic, 10)
+        self._control_mode = DIFFERENTIAL
+        self._control_mode_subscription = self.create_subscription(
+            String,
+            "/navigation/control_mode",
+            self._set_control_mode,
+            QoSProfile(
+                depth=1,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                reliability=ReliabilityPolicy.RELIABLE,
+            ),
+        )
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.service = self.create_service(
@@ -274,6 +289,23 @@ class Point3FineTuneNode(Node):
 
         return False, "timed out"
 
+    def _set_control_mode(self, message: String) -> None:
+        if message.data in {DIFFERENTIAL, ACKERMANN}:
+            self._control_mode = message.data
+
+    def _yaw_command(self, yaw_error: float) -> Twist:
+        command = Twist()
+        angular = clamp(self.k_yaw * yaw_error, self.max_angular_speed)
+        if self._control_mode == ACKERMANN:
+            command.linear.x, command.angular.z = constrain_ackermann_velocity(
+                0.0,
+                angular,
+                min_turn_linear_speed=self.max_linear_speed,
+            )
+        else:
+            command.angular.z = angular
+        return command
+
     def _tune_final_yaw(self, deadline: float, period: float) -> tuple[bool, str]:
         while rclpy.ok() and time.monotonic() < deadline:
             state = self._get_state_or_wait(period)
@@ -283,8 +315,7 @@ class Point3FineTuneNode(Node):
             if abs(yaw_error) <= self.yaw_tolerance:
                 return True, "yaw aligned"
 
-            cmd = Twist()
-            cmd.angular.z = clamp(self.k_yaw * yaw_error, self.max_angular_speed)
+            cmd = self._yaw_command(yaw_error)
             self.cmd_vel_pub.publish(cmd)
             self._log_fine_tune_state(
                 "yaw",
@@ -336,8 +367,7 @@ class Point3FineTuneNode(Node):
                 self._publish_stop()
                 return True
 
-            cmd = Twist()
-            cmd.angular.z = clamp(self.k_yaw * yaw_error, self.max_angular_speed)
+            cmd = self._yaw_command(yaw_error)
             self.cmd_vel_pub.publish(cmd)
             self._log_fine_tune_state(
                 stage_name,

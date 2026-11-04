@@ -105,9 +105,11 @@ bash deploy/local/start-all-local.sh
 bash deploy/local/stop-local.sh
 ```
 
-`start-vehicle-local.sh` 会清理被杀 ROS 进程遗留的 Fast DDS 共享内存段；
-否则 Python 节点彼此可见而 C++ 雷达/合并节点会静默消失。不要手工删除正在运行
-进程的 `/dev/shm/fastrtps*`。
+本机存在正式 `lr-*` systemd 部署时，旧用户态启停脚本会拒绝执行；桌面启动器只打开
+正式控制台，不再启动另一套串口驱动或模拟机械臂。正式服务暂时停止时也不回退到旧栈。
+用户态停止脚本只处理其 PID 文件记录的进程，不再按共用的建图脚本路径清杀进程。
+启停脚本均不会删除全局 Fast DDS 共享内存；不同 ROS domain 也可能使用同一批共享内存
+文件。不要手工删除正在运行进程的 `/dev/shm/fastrtps*`。
 
 > **安全边界**：`start-all-local.sh` 通过 `spawn-detached.py` 异步派发车端栈，
 > 并关闭继承的 API 管道，避免一键启动请求被后台进程挂住。车端栈启动不代表

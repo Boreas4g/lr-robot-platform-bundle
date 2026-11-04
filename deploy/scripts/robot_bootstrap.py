@@ -58,6 +58,10 @@ def install_node(version):
         if target.exists():
             raise SetupError(f"Node 目标目录已经存在但不完整：{target}")
         shutil.move(str(directory / f"node-{version}-linux-x64"), target)
+        for entry in target.rglob("*"):
+            if entry.is_dir() and not entry.is_symlink():
+                entry.chmod(entry.stat().st_mode | 0o755)
+        target.chmod(target.stat().st_mode | 0o755)
         link = Path("/opt/lr-node")
         if link.exists() and not link.is_symlink():
             raise SetupError("/opt/lr-node 已存在且不是符号链接")
@@ -152,9 +156,10 @@ def bootstrap(p, *, install_deps):
     paths = as_user(["colcon", "list", "--packages-up-to", *packages, "--paths-only"], cwd=ROS, capture=True).stdout.splitlines()
     if not paths:
         raise SetupError("未找到 ROS 运行包")
+    rosdep_env = {**env, "ROS_HOME": str(Path(account.pw_dir) / ".ros")}
     with no_service_restarts():
         run(["rosdep", "install", "--rosdistro", "jazzy", "--from-paths", *[ROS / path for path in paths],
-             "--ignore-src", "-r", "-y"], env=env)
+             "--ignore-src", "-r", "-y"], env=rosdep_env)
     for name in ("build", "install", "log"):
         directory = ROS / name
         if directory.exists():

@@ -244,7 +244,7 @@ def generate_launch_description():
                 respawn_delay=2.0,
                 parameters=[configured_params],
                 arguments=["--ros-args", "--log-level", log_level],
-                remappings=remappings + [("cmd_vel", "cmd_vel_nav")],
+                remappings=remappings + [("cmd_vel", "cmd_vel_limited")],
             ),
             Node(
                 package="nav2_collision_monitor",
@@ -329,7 +329,7 @@ def generate_launch_description():
                         plugin="nav2_velocity_smoother::VelocitySmoother",
                         name="velocity_smoother",
                         parameters=[configured_params],
-                        remappings=remappings + [("cmd_vel", "cmd_vel_nav")],
+                        remappings=remappings + [("cmd_vel", "cmd_vel_limited")],
                     ),
                     ComposableNode(
                         package="nav2_collision_monitor",
@@ -382,6 +382,16 @@ def generate_launch_description():
     ld.add_action(declare_log_level_cmd)
     ld.add_action(nav2_container)
     ld.add_action(localization_launch)
+    curvature_limiter = Node(
+        package="robot_decision",
+        executable="curvature_limiter_node",
+        name="curvature_limiter",
+        output="screen",
+        parameters=[configured_params],
+        arguments=["--ros-args", "--log-level", log_level],
+        remappings=remappings,
+    )
+    ld.add_action(curvature_limiter)
     ld.add_action(nav_startup_helper)
     ld.add_action(load_nodes)
     ld.add_action(load_composable_nodes)

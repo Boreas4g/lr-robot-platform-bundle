@@ -27,8 +27,8 @@ class GripperCommand:
     stall_time_s: float = 0.6
     min_monitor_s: float = 0.4
     hold_margin_deg: float = 0.5
-    command_lead_s: float = 0.25
-    stall_lead_threshold_deg: float = 3.0
+    command_lead_s: float = 0.65
+    stall_lead_threshold_deg: float = 10.0
     close_timeout_margin_s: float = 1.5
     start_effort: float = 0.60
     start_boost_s: float = 0.4
@@ -42,6 +42,10 @@ class GripperCommand:
     # effort used while closing. Keeps the book without overheating motor 7.
     carry_effort: float = 0.20
     carry_lead_deg: float = 1.0
+    adaptive_carry: bool = False
+    adaptive_carry_max_effort: float = 0.50
+    adaptive_carry_slip_deg: float = 1.0
+    adaptive_carry_max_recovery_deg: float = 4.0
 
 
 @dataclass(frozen=True)

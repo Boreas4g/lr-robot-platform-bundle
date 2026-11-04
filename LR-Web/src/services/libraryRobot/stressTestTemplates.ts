@@ -17,6 +17,7 @@ export type StressTestReturnAction = {
 export type StressTestTemplateConfig = {
   takeouts: StressTestTakeoutAction[];
   returns: StressTestReturnAction[];
+  takeoutMode?: 'standard' | 'mid';
   liftSpeedLevel: number;
   /** 历史模板字段：往复循环时代遗留，当前手动逐轮模式忽略。 */
   maxRounds?: number | null;

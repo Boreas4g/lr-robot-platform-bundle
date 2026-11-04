@@ -110,15 +110,15 @@ sudo bash scripts/install-takeout-service.sh
 sudo systemctl enable --now lr-bookarm-takeout.service
 ```
 
-`LR-Web/scripts/start-all.sh` will recognize a running service but refuses to
-start an offline BookArm daemon automatically. After an on-site CAN, joint,
-camera and emergency-stop inspection, use
-`LR_BOOKARM_ALLOW_START=true bash scripts/start-all.sh` for that explicit
-hardware startup. It deliberately recognizes only the managed Unix socket:
-an older loopback TCP service on `127.0.0.1:8090` is reported as a conflict and
-must be stopped and migrated by an on-site operator before the new service is
-started. This prevents two independent processes from owning the same CAN,
-camera and serial devices.
+`LR-Web/scripts/start-all.sh` configures CAN and starts the managed BookArm
+service whenever it is offline. The service startup connects devices and begins
+feedback/temperature monitoring without enabling the motors or issuing a
+motion command. If sustained overheating is detected, thermal protection may
+attempt a checked park before stopping the motors. Enable the CAN and BookArm
+systemd units to start them at boot. The script recognizes only
+the managed Unix socket: an older loopback TCP service on `127.0.0.1:8090` is
+reported as a conflict and must be stopped before the new service starts. This
+prevents two processes from owning the same CAN, camera and serial devices.
 
 The service journal is `recordings/runtime/bookarm-tasks.json`.  After a
 process restart, queued or running tasks are retained and reported as

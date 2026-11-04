@@ -42,6 +42,12 @@ from std_srvs.srv import Trigger
 from robot_decision.bookarm_client import BookArmApiError, BookArmClient, BookArmHealth
 from robot_decision.bookarm_sdk_client import BookArmSdkClient
 from robot_decision.bookarm_takeout_client import BookArmTakeoutClient
+from robot_decision.drive_control import (
+    ACKERMANN,
+    DIFFERENTIAL,
+    constrain_ackermann_velocity,
+    control_mode,
+)
 from robot_decision.hardware_adapter import (
     DEFAULT_HARDWARE_PROFILE,
     HardwareAdapter,
@@ -228,6 +234,7 @@ class EdgeGatewayNode(Node):
         self._active_cruise_route: CruiseRoute | None = None
         self._cruise_waypoint_index = 0
         self._cruise_loop_index = 0
+        self._control_mode = DIFFERENTIAL
         self._manual_command_deadline: float | None = None
         self._manual_target_linear = 0.0
         self._manual_target_angular = 0.0
@@ -294,6 +301,16 @@ class EdgeGatewayNode(Node):
         )
         self._map_switch_publisher = self.create_publisher(String, self.map_switch_topic, 10)
         self._manual_velocity_publisher = self.create_publisher(Twist, self.manual_cmd_vel_topic, 10)
+        self._control_mode_publisher = self.create_publisher(
+            String,
+            "/navigation/control_mode",
+            QoSProfile(
+                depth=1,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                reliability=ReliabilityPolicy.RELIABLE,
+            ),
+        )
+        self._control_mode_publisher.publish(String(data=self._control_mode))
         self._localization_status_subscription = self.create_subscription(
             String,
             self.localization_status_topic,
@@ -681,6 +698,9 @@ class EdgeGatewayNode(Node):
         if self._pending_fine_tune_command and command.command not in {"cancel", "stop", "emergency_stop"}:
             self._publish_event("command_rejected", command, {"reason": "fine tune is still in progress"})
             return
+        if command.command == "set_control_mode":
+            self._set_navigation_control_mode(command)
+            return
         if command.command == "navigate":
             self._start_navigation(command)
             return
@@ -690,7 +710,7 @@ class EdgeGatewayNode(Node):
         if command.command == "auto_localize":
             self._auto_localize(command)
             return
-        if command.command == "fine_tune":
+        if command.command in {"fine_tune", "shelf_move"}:
             self._start_fine_tune(command)
             return
         if command.command == "switch_map":
@@ -945,6 +965,41 @@ class EdgeGatewayNode(Node):
             details.update({"x": pose[0], "y": pose[1], "yaw": pose[2]})
         self._publish_event("localization_initializing", command, details)
 
+    def _activate_control_mode(self, command: GatewayCommand) -> str:
+        mode = control_mode(command.payload)
+        self._control_mode = mode
+        publisher = getattr(self, "_control_mode_publisher", None)
+        if publisher is not None:
+            publisher.publish(String(data=mode))
+        return mode
+
+    def _set_navigation_control_mode(self, command: GatewayCommand) -> None:
+        if (
+            self._active_command
+            or self._pending_navigation_command
+            or self._pending_fine_tune_command
+            or self._manual_control_active()
+        ):
+            self._publish_event(
+                "command_rejected", command, {"reason": "cannot change control mode during motion"}
+            )
+            return
+        try:
+            mode = self._activate_control_mode(command)
+        except ValueError as error:
+            self._publish_event("command_rejected", command, {"reason": str(error)})
+            return
+        self._publish_event("command_completed", command, {"controlMode": mode})
+
+    @staticmethod
+    def _select_navigation_backend(ros_goal: NavigateToPose.Goal, mode: str) -> None:
+        if mode == ACKERMANN:
+            ros_goal.planner_id = "AckermannGridBased"
+            ros_goal.controller_id = "AckermannFollowPath"
+        else:
+            ros_goal.planner_id = "GridBased"
+            ros_goal.controller_id = "FollowPath"
+
     def _start_navigation(self, command: GatewayCommand) -> None:
         if self._manual_control_active() or self._bookarm_test_command:
             self._publish_event(
@@ -989,9 +1044,15 @@ class EdgeGatewayNode(Node):
             self._publish_event("command_rejected", command, {"reason": "Nav2 NavigateToPose server is unavailable"})
             return
 
+        try:
+            mode = self._activate_control_mode(command)
+        except ValueError as error:
+            self._publish_event("command_rejected", command, {"reason": str(error)})
+            return
         self._pending_navigation_command = command
         ros_goal = NavigateToPose.Goal()
         ros_goal.pose = self._pose_from_goal(goal)
+        self._select_navigation_backend(ros_goal, mode)
         future = self._action_client.send_goal_async(ros_goal, feedback_callback=self._navigation_feedback)
         future.add_done_callback(lambda result: self._handle_goal_response(command, goal, result))
         self._publish_event("navigation_dispatching", command, {"mapId": goal.map_id, "annotationId": goal.annotation_id})
@@ -1028,6 +1089,7 @@ class EdgeGatewayNode(Node):
                 max_y,
                 self.max_abs_yaw,
             )
+            self._activate_control_mode(command)
         except ValueError as error:
             self._publish_event("command_rejected", command, {"reason": str(error)})
             return
@@ -1253,6 +1315,13 @@ class EdgeGatewayNode(Node):
         parameter.value = ParameterValue(type=ParameterType.PARAMETER_DOUBLE, double_value=float(value))
         return parameter
 
+    @staticmethod
+    def _bool_parameter(name: str, value: bool) -> ParameterMsg:
+        parameter = ParameterMsg()
+        parameter.name = name
+        parameter.value = ParameterValue(type=ParameterType.PARAMETER_BOOL, bool_value=bool(value))
+        return parameter
+
     def _abort_book_shelf_fine_tune(self) -> None:
         timer = getattr(self, "_book_shelf_fine_tune_timer", None)
         if timer is not None:
@@ -1266,10 +1335,10 @@ class EdgeGatewayNode(Node):
         except Exception as error:  # pragma: no cover - ROS transport failures are runtime-only.
             self.get_logger().warn(f"book shelf finetune abort request failed: {error}")
 
-    # ---- Standalone shelf fine tune -------------------------------
+    # ---- Standalone shelf fine tune and X-only shelf move ---------
 
     def _start_fine_tune(self, command: GatewayCommand) -> None:
-        """Align precisely on an operator target through the local fine-tune service."""
+        """Run full fine tuning or an X-only shelf move through the local service."""
         if (
             self._manual_control_active()
             or self._bookarm_test_command
@@ -1319,20 +1388,36 @@ class EdgeGatewayNode(Node):
                 {"reason": "book shelf finetune parameter service is unavailable"},
             )
             return
+        try:
+            mode = self._activate_control_mode(command)
+        except ValueError as error:
+            self._publish_event("command_rejected", command, {"reason": str(error)})
+            return
         self._pending_fine_tune_command = command
+        dispatch_details = {
+            "mapId": target.map_id or self.active_map_id,
+            "targetX": target.x,
+            "targetY": target.y,
+            "targetYaw": target.yaw,
+        }
+        if command.command == "shelf_move":
+            dispatch_details["xOnly"] = True
+            if target.speed_mps is not None:
+                dispatch_details["speedMps"] = target.speed_mps
         self._publish_event(
-            "fine_tune_dispatching",
+            f"{command.command}_dispatching",
             command,
-            {
-                "mapId": target.map_id or self.active_map_id,
-                "targetX": target.x,
-                "targetY": target.y,
-                "targetYaw": target.yaw,
-            },
+            dispatch_details,
         )
         request = SetParameters.Request()
         request.parameters = [
             self._string_parameter("target_task_id", command.command_id),
+            self._string_parameter("control_mode", mode),
+            self._bool_parameter("x_only", command.command == "shelf_move"),
+            self._double_parameter(
+                "shelf_move_speed_mps",
+                target.speed_mps if target.speed_mps is not None else float("nan"),
+            ),
             self._double_parameter("target_x", target.x),
             self._double_parameter("target_y", target.y),
             self._double_parameter("target_yaw", target.yaw),
@@ -1406,8 +1491,13 @@ class EdgeGatewayNode(Node):
         self._abort_book_shelf_fine_tune()
         self._request_hardware_safe_stop(emergency=command.command == "emergency_stop")
         if active_command is not None:
-            self._publish_event("fine_tune_cancelled", active_command, {"reason": reason})
-        self._publish_event("command_completed", command, {"result": "fine tune cancellation requested"})
+            self._publish_event(f"{active_command.command}_cancelled", active_command, {"reason": reason})
+        result = (
+            "shelf move cancellation requested"
+            if active_command is not None and active_command.command == "shelf_move"
+            else "fine tune cancellation requested"
+        )
+        self._publish_event("command_completed", command, {"result": result})
 
     def _move_lift(self, command: GatewayCommand) -> None:
         if (
@@ -1603,6 +1693,7 @@ class EdgeGatewayNode(Node):
         goal.pose = self._pose_from_goal(
             NavigationGoal(route.map_id, waypoint.annotation_id, waypoint.x, waypoint.y, waypoint.yaw)
         )
+        self._select_navigation_backend(goal, control_mode(command.payload))
         waypoint_index = self._cruise_waypoint_index
         loop_index = self._cruise_loop_index
         future = self._action_client.send_goal_async(goal, feedback_callback=self._navigation_feedback)
@@ -1994,6 +2085,7 @@ class EdgeGatewayNode(Node):
     def _manual_jog(self, command: GatewayCommand) -> None:
         try:
             jog = parse_manual_jog(command.payload)
+            mode = self._activate_control_mode(command)
         except ValueError as error:
             self._publish_event("command_rejected", command, {"reason": str(error)})
             return
@@ -2009,8 +2101,11 @@ class EdgeGatewayNode(Node):
             return
         if self._manual_command_deadline is None:
             self._cancel_active_navigation("manual control takeover")
-        self._manual_target_linear = jog.linear
-        self._manual_target_angular = jog.angular
+        linear, angular = jog.linear, jog.angular
+        if mode == ACKERMANN:
+            linear, angular = constrain_ackermann_velocity(linear, angular)
+        self._manual_target_linear = linear
+        self._manual_target_angular = angular
         active_for_seconds = min(
             jog.duration_ms / 1000.0,
             self.manual_command_timeout_seconds,
@@ -2171,7 +2266,9 @@ class EdgeGatewayNode(Node):
             self._pending_fine_tune_command = None
             self._abort_book_shelf_fine_tune()
             self._publish_event(
-                "fine_tune_cancelled", pending_fine_tune, {"reason": "robot runtime is stopping"}
+                f"{pending_fine_tune.command}_cancelled",
+                pending_fine_tune,
+                {"reason": "robot runtime is stopping"},
             )
         self._mqtt.loop_stop()
         self._mqtt.disconnect()

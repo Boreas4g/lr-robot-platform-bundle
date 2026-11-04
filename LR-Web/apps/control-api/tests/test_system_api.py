@@ -189,7 +189,7 @@ class RestartAllEndpointTests(unittest.TestCase):
 
 
 class BookarmStartPolicyTests(unittest.TestCase):
-    """机械臂硬件启动确认：GET/PUT /api/v1/system/bookarm-start-policy。"""
+    """Older clients always see the managed BookArm startup as enabled."""
 
     def setUp(self) -> None:
         self.client = TestClient(app)
@@ -201,42 +201,29 @@ class BookarmStartPolicyTests(unittest.TestCase):
         self._dirs = tempfile.TemporaryDirectory()
         self.addCleanup(self._dirs.cleanup)
         self.policy_file = Path(self._dirs.name) / "bookarm-start-policy.conf"
-        original = system_api.BOOKARM_START_POLICY_FILE
-        system_api.BOOKARM_START_POLICY_FILE = self.policy_file
-        self.addCleanup(setattr, system_api, "BOOKARM_START_POLICY_FILE", original)
 
-    def test_get_defaults_to_disallowed_when_file_missing(self):
+    def test_get_reports_enabled_without_policy_file(self):
         response = self.client.get("/api/v1/system/bookarm-start-policy", headers=self.headers)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"allow": False})
+        self.assertEqual(response.json(), {"allow": True})
         self.assertFalse(self.policy_file.exists())
 
-    def test_put_persists_and_get_reads_back(self):
+    def test_put_cannot_disable_managed_startup(self):
         response = self.client.put(
-            "/api/v1/system/bookarm-start-policy", headers=self.headers, json={"allow": True}
+            "/api/v1/system/bookarm-start-policy", headers=self.headers, json={"allow": False}
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"allow": True})
-        self.assertEqual(self.policy_file.read_text(encoding="utf-8"), "true\n")
+        self.assertFalse(self.policy_file.exists())
 
         read_back = self.client.get("/api/v1/system/bookarm-start-policy", headers=self.headers)
         self.assertEqual(read_back.json(), {"allow": True})
 
-        revoked = self.client.put(
-            "/api/v1/system/bookarm-start-policy", headers=self.headers, json={"allow": False}
-        )
-        self.assertEqual(revoked.status_code, 200)
-        self.assertEqual(revoked.json(), {"allow": False})
-        self.assertEqual(self.policy_file.read_text(encoding="utf-8"), "false\n")
-        read_back = self.client.get("/api/v1/system/bookarm-start-policy", headers=self.headers)
-        self.assertEqual(read_back.json(), {"allow": False})
-
-    def test_get_treats_corrupt_file_as_disallowed(self):
-        # 内容不是纯文本 true 一律按未确认处理（安全默认）。
+    def test_corrupt_old_policy_file_is_ignored(self):
         self.policy_file.write_text("not-json{", encoding="utf-8")
         response = self.client.get("/api/v1/system/bookarm-start-policy", headers=self.headers)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"allow": False})
+        self.assertEqual(response.json(), {"allow": True})
 
     def test_put_validates_body(self):
         response = self.client.put(

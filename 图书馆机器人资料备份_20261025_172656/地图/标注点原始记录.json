@@ -1,0 +1,67 @@
+[
+  {
+    "id": "ANN-223CED76D314",
+    "map_id": "MAP-BB36BE4791F2",
+    "kind": "shelf",
+    "label": "书架点",
+    "pixel_x": 225,
+    "pixel_y": 154,
+    "map_x": 0.6270000000000007,
+    "map_y": 0.7700000000000014,
+    "yaw": 0.22689280275926285,
+    "created_at": "2026-09-27 05:20:55.457160+00:00",
+    "created_by": "admin"
+  },
+  {
+    "id": "ANN-F7B453FE7F06",
+    "map_id": "MAP-BB36BE4791F2",
+    "kind": "shelf",
+    "label": "书架点 3",
+    "pixel_x": 227,
+    "pixel_y": 155,
+    "map_x": 0.7070000000000007,
+    "map_y": 0.7299999999999986,
+    "yaw": 0.10471975511965977,
+    "created_at": "2026-09-26 10:01:12.635361+00:00",
+    "created_by": "admin"
+  },
+  {
+    "id": "ANN-DCC98AD57F69",
+    "map_id": "MAP-BB36BE4791F2",
+    "kind": "shelf",
+    "label": "书架点 4",
+    "pixel_x": 225,
+    "pixel_y": 153,
+    "map_x": 0.63,
+    "map_y": 0.81,
+    "yaw": 0.22689280275926285,
+    "created_at": "2026-09-26 08:54:53.733862+00:00",
+    "created_by": "admin"
+  },
+  {
+    "id": "ANN-9012F3EDC4CC",
+    "map_id": "MAP-BB36BE4791F2",
+    "kind": "shelf",
+    "label": "书架点 6",
+    "pixel_x": 226,
+    "pixel_y": 154,
+    "map_x": 0.6670000000000016,
+    "map_y": 0.7700000000000014,
+    "yaw": 0.20943951023931953,
+    "created_at": "2026-09-27 09:01:32.524024+00:00",
+    "created_by": "admin"
+  },
+  {
+    "id": "ANN-E1B39F9ABEAE",
+    "map_id": "MAP-BB36BE4791F2",
+    "kind": "charging",
+    "label": "新充电区",
+    "pixel_x": 139,
+    "pixel_y": 96,
+    "map_x": -2.812999999999999,
+    "map_y": 3.0900000000000016,
+    "yaw": 0.08726646259971647,
+    "created_at": "2026-09-26 08:55:38.122293+00:00",
+    "created_by": "admin"
+  }
+]

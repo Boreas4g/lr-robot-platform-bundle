@@ -1,9 +1,11 @@
 """Three-level speed presets shared by the take/return/mid-return plans.
 
-One ``speed_level`` uniformly scales every speed-coupled parameter of a
-motion plan: all arm-motion ``*_duration_s`` fields, the rod speed word and
-the gripper open/close speeds plus the gripper timing fields that track the
-motion speed (command lead, stall window, contact hold). Everything else —
+One ``speed_level`` uniformly scales the speed-coupled parameters of a
+motion plan: arm-motion durations (except the post-grasp withdrawal), the
+rod speed word and the gripper open/close speeds plus the gripper timing
+fields that track the motion speed (command lead, stall window, contact
+hold). The post-grasp withdrawal always keeps its tuned duration so the book
+is gripped securely before extraction. Everything else —
 contact-judgement constants, torque/effort limits, tolerances, loop periods —
 is deliberately left untouched so grasp safety semantics never change with
 the level.
@@ -39,9 +41,8 @@ Level justifications:
   degree lead over feedback (speed x lead) stays in the same few-degree band;
   the ``stall_lead_threshold_deg`` reachability check in the service keeps
   passing at every level.
-- ``stall_time_s``/``contact_hold_duration_s`` are the settle windows the
-  user perceives as pauses after contact; they shrink on ``fast`` and widen
-  on ``slow`` but are never removed — they are the book-present judgement.
+- ``stall_time_s`` scales with the level, while ``contact_hold_duration_s``
+  always keeps its tuned value so the book has time to stabilize before extraction.
 """
 
 from __future__ import annotations
@@ -50,11 +51,12 @@ from dataclasses import dataclass, replace
 from typing import Mapping, TypeVar, Union
 
 from bookarm.domain.plans.mid_return import MidReturnMotionPlan
+from bookarm.domain.plans.mid_takeout import MidTakeoutMotionPlan
 from bookarm.domain.plans.return_book import ReturnBookMotionPlan
 from bookarm.domain.plans.take_book import GripperCommand, TakeBookMotionPlan
 
 
-SPEED_LEVELS = ("slow", "standard", "fast")
+SPEED_LEVELS = ("slow", "standard", "fast", "ultra")
 DEFAULT_SPEED_LEVEL = "standard"
 
 
@@ -67,7 +69,6 @@ class SpeedProfile:
     gripper_speed_scale: float = 1.0
     gripper_command_lead_scale: float = 1.0
     gripper_stall_time_scale: float = 1.0
-    gripper_contact_hold_scale: float = 1.0
 
 
 SPEED_PROFILES: Mapping[str, SpeedProfile] = {
@@ -77,7 +78,6 @@ SPEED_PROFILES: Mapping[str, SpeedProfile] = {
         gripper_speed_scale=0.7,
         gripper_command_lead_scale=1.6,
         gripper_stall_time_scale=1.3,
-        gripper_contact_hold_scale=1.2,
     ),
     "standard": SpeedProfile(),
     "fast": SpeedProfile(
@@ -86,22 +86,31 @@ SPEED_PROFILES: Mapping[str, SpeedProfile] = {
         gripper_speed_scale=3.6,
         gripper_command_lead_scale=0.6,
         gripper_stall_time_scale=0.85,
-        gripper_contact_hold_scale=0.6,
+    ),
+    "ultra": SpeedProfile(
+        duration_scale=0.45,
+        rod_speed_scale=2.0,
+        gripper_speed_scale=4.0,
+        gripper_command_lead_scale=0.5,
+        gripper_stall_time_scale=0.75,
     ),
 }
 
 
-AnyMotionPlan = Union[TakeBookMotionPlan, ReturnBookMotionPlan, MidReturnMotionPlan]
-PlanT = TypeVar("PlanT", TakeBookMotionPlan, ReturnBookMotionPlan, MidReturnMotionPlan)
+AnyMotionPlan = Union[
+    TakeBookMotionPlan, ReturnBookMotionPlan, MidReturnMotionPlan, MidTakeoutMotionPlan
+]
+PlanT = TypeVar(
+    "PlanT", TakeBookMotionPlan, ReturnBookMotionPlan, MidReturnMotionPlan, MidTakeoutMotionPlan
+)
 
-# Every arm-motion duration field per plan type; slot-calibration durations
-# (book-stand poses) are intentionally not part of the speed level.
+# Slot-calibration durations and the post-grasp withdrawal are intentionally
+# excluded: the latter keeps its tuned duration so the grip stabilizes first.
 _TAKE_DURATION_FIELDS = (
     "zero_duration_s",
     "pregrasp_duration_s",
     "approach_duration_s",
     "fine_grasp_duration_s",
-    "post_grasp_duration_s",
     "debug_duration_s",
 )
 _RETURN_DURATION_FIELDS = (
@@ -133,6 +142,7 @@ _MID_RETURN_DURATION_FIELDS = (
     "press_duration_s",
     "press_retract_duration_s",
 )
+_MID_TAKEOUT_DURATION_FIELDS = _MID_RETURN_DURATION_FIELDS + ("raise_duration_s",)
 
 
 def validate_speed_level(value: object) -> str:
@@ -148,6 +158,8 @@ def validate_speed_level(value: object) -> str:
 def _duration_fields(plan: AnyMotionPlan) -> tuple:
     if isinstance(plan, TakeBookMotionPlan):
         return _TAKE_DURATION_FIELDS
+    if isinstance(plan, MidTakeoutMotionPlan):
+        return _MID_TAKEOUT_DURATION_FIELDS
     if isinstance(plan, MidReturnMotionPlan):
         return _MID_RETURN_DURATION_FIELDS
     if isinstance(plan, ReturnBookMotionPlan):
@@ -167,9 +179,6 @@ def _scale_gripper(gripper: GripperCommand, profile: SpeedProfile, direction: fl
         close_speed_deg_s=round(gripper.close_speed_deg_s * factor(profile.gripper_speed_scale), 6),
         command_lead_s=round(gripper.command_lead_s * factor(profile.gripper_command_lead_scale), 6),
         stall_time_s=round(gripper.stall_time_s * factor(profile.gripper_stall_time_scale), 6),
-        contact_hold_duration_s=round(
-            gripper.contact_hold_duration_s * factor(profile.gripper_contact_hold_scale), 6
-        ),
     )
 
 

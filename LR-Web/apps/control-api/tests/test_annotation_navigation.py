@@ -283,6 +283,83 @@ def test_annotation_navigation_cancel_stops_the_flow() -> None:
         _cleanup(index, original_robot, created_ids)
 
 
+def test_annotation_navigation_cancel_terminal_parent_clears_queued_stage(monkeypatch) -> None:
+    from app.schemas import DispatchTask
+
+    index, original_robot = _prepare_robot()
+    store = _store()
+    parent_id = "TSK-ANN-CANCEL-PARENT"
+    stage_id = "TSK-ANN-CANCEL-STAGE"
+    created_ids = {parent_id, stage_id}
+    now = datetime.now(UTC)
+    parent = DispatchTask(
+        id=parent_id,
+        type="navigate",
+        robotId="LR-01",
+        target="已结束的标注导航",
+        status="cancelled",
+        progress=5,
+        updatedAt=now.isoformat(),
+        mapId=MAP_ID,
+        annotationId=ANNOTATION_ID,
+        workflowDetails={"annotationNavigation": True, "navigationTaskId": stage_id},
+    )
+    stage = DispatchTask(
+        id=stage_id,
+        type="navigate",
+        robotId="LR-01",
+        target="残留排队导航",
+        status="queued",
+        progress=0,
+        updatedAt=now.isoformat(),
+        mapId=MAP_ID,
+        annotationId=ANNOTATION_ID,
+    )
+    store.tasks.insert(0, stage)
+    store.tasks.insert(0, parent)
+    commands_before = set(store.commands)
+
+    class RejectNewLockCache:
+        def __init__(self):
+            self.released = []
+
+        def get_idempotent_command(self, key):
+            return None
+
+        def acquire_robot_lock(self, robot_id, command_id, ttl_seconds):
+            raise AssertionError("取消指令不应被普通控制锁阻止")
+
+        def set_idempotent_command(self, key, value, ttl_seconds):
+            pass
+
+        def release_robot_lock(self, robot_id, command_id):
+            self.released.append((robot_id, command_id))
+
+    cache = RejectNewLockCache()
+    headers = _headers()
+    monkeypatch.setattr(store, "cache", cache)
+    try:
+        response = client.post(
+            f"/api/v1/robots/LR-01/annotations/navigate/{parent_id}/cancel",
+            headers=headers,
+        )
+        assert response.status_code == 200
+        assert next(item for item in store.tasks if item.id == stage_id).status == "cancelled"
+        assert any(
+            command.command == "cancel" and command.payload.get("taskId") == stage_id
+            for command in store.commands.values()
+        )
+        assert ("LR-01", stage_id.replace("TSK-", "CMD-", 1)) in cache.released
+    finally:
+        _cleanup(index, original_robot, created_ids)
+        new_command_ids = set(store.commands) - commands_before
+        for command_id in new_command_ids:
+            store.commands.pop(command_id, None)
+        for key, command in list(store.idempotency.items()):
+            if command.commandId in new_command_ids:
+                store.idempotency.pop(key, None)
+
+
 def test_annotation_navigation_guards() -> None:
     index, original_robot = _prepare_robot()
     store = _store()

@@ -415,6 +415,7 @@ ParamType = Literal["float", "int", "bool"]
 GROUP_CHASSIS = "车辆与轮系"
 GROUP_TF = "雷达与坐标变换"
 GROUP_VELOCITY = "导航速度链"
+GROUP_ACKERMANN = "类阿克曼规划与控制"
 GROUP_GOAL = "到位判定"
 GROUP_SMOOTHER = "速度平滑"
 GROUP_COLLISION = "碰撞监控"
@@ -660,6 +661,83 @@ PARAMS: tuple[ParamDef, ...] = (
         step=0.05,
         source=_NAV2,
         yaml_paths=(_nav2("controller_server", "ros__parameters", "FollowPath", "decel_lim_theta"),),
+    ),
+    ParamDef(
+        key="ackermann.minimum_turning_radius",
+        group=GROUP_ACKERMANN,
+        label="最小转弯半径",
+        unit="m",
+        type="float",
+        min=0.3,
+        max=3.0,
+        step=0.05,
+        source=_NAV2,
+        yaml_paths=(
+            _nav2("planner_server", "ros__parameters", "AckermannGridBased", "minimum_turning_radius"),
+            _nav2("curvature_limiter", "ros__parameters", "min_turning_radius"),
+        ),
+    ),
+    ParamDef(
+        key="ackermann.min_turn_linear_speed",
+        group=GROUP_ACKERMANN,
+        label="转向最低线速度",
+        unit="m/s",
+        type="float",
+        min=0.02,
+        max=0.3,
+        step=0.01,
+        source=_NAV2,
+        yaml_paths=(_nav2("curvature_limiter", "ros__parameters", "min_turn_linear_speed"),),
+    ),
+    ParamDef(
+        key="ackermann.desired_linear_vel",
+        group=GROUP_ACKERMANN,
+        label="RPP 期望线速度",
+        unit="m/s",
+        type="float",
+        min=0.05,
+        max=0.5,
+        step=0.01,
+        source=_NAV2,
+        yaml_paths=(_nav2("controller_server", "ros__parameters", "AckermannFollowPath", "desired_linear_vel"),),
+    ),
+    ParamDef(
+        key="ackermann.lookahead_dist",
+        group=GROUP_ACKERMANN,
+        label="RPP 前视距离",
+        unit="m",
+        type="float",
+        min=0.3,
+        max=2.0,
+        step=0.05,
+        source=_NAV2,
+        yaml_paths=(_nav2("controller_server", "ros__parameters", "AckermannFollowPath", "lookahead_dist"),),
+    ),
+    ParamDef(
+        key="ackermann.min_approach_linear_velocity",
+        group=GROUP_ACKERMANN,
+        label="RPP 接近最低速度",
+        unit="m/s",
+        type="float",
+        min=0.02,
+        max=0.3,
+        step=0.01,
+        source=_NAV2,
+        yaml_paths=(
+            _nav2("controller_server", "ros__parameters", "AckermannFollowPath", "min_approach_linear_velocity"),
+        ),
+    ),
+    ParamDef(
+        key="ackermann.max_planning_time",
+        group=GROUP_ACKERMANN,
+        label="Hybrid 规划时间上限",
+        unit="s",
+        type="float",
+        min=0.5,
+        max=10.0,
+        step=0.5,
+        source=_NAV2,
+        yaml_paths=(_nav2("planner_server", "ros__parameters", "AckermannGridBased", "max_planning_time"),),
     ),
     # 到位判定（general_goal_checker）
     ParamDef(

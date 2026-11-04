@@ -13,6 +13,17 @@ describe('errorText', () => {
     expect(text).toContain("Frame didn't arrive within 5000");
   });
 
+  it('does not report spine recognition misses as camera frame failures', () => {
+    const raw =
+      'BookArm 硬件状态不可用：book spine was not detected within 10 D435 captures。请确认 can0、CANable。';
+    const text = errorMessage(new Error(raw), '识别失败');
+
+    expect(text).toContain('未识别到目标书脊或有效深度');
+    expect(text).toContain('书脊模板与图书一致');
+    expect(text).not.toContain('相机取帧失败');
+    expect(text).not.toContain('USB 接触不良');
+  });
+
   it('translates inverse kinematics failures', () => {
     const text = errorMessage(
       new Error('MovePByJ inverse kinematics failed: did not converge'),

@@ -34,6 +34,12 @@ export default [
         component: './circulation/return',
       },
       {
+        path: '/circulation/quick-demo',
+        name: '快速取还书演示',
+        icon: 'playCircle',
+        component: './circulation/quick-demo',
+      },
+      {
         path: '/circulation/multi-round',
         name: '多轮取还书',
         icon: 'retweet',
@@ -150,6 +156,7 @@ export default [
   { path: '/circulation/takeout-tuning', redirect: '/debug/tuning' },
   { path: '/circulation/return-tuning', redirect: '/debug/tuning' },
   { path: '/circulation/midreturn-tuning', redirect: '/debug/tuning' },
+  { path: '/circulation/midtakeout-tuning', redirect: '/debug/tuning' },
   { path: '/dispatch/tasks', redirect: '/circulation/takeout' },
   { path: '/overview', redirect: '/overview/dashboard' },
   { path: '/library', redirect: '/library/map' },

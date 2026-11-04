@@ -86,7 +86,7 @@ class D435BookSpineLocator:
             self._worker.stop()
 
     def locate_book(self, template: SpineTemplate) -> BookTarget:
-        timeout_s = (float(self.config.frame_timeout_ms) / 1000.0) * (self.config.max_attempts + 2)
+        timeout_s = self._capture_budget_s(self.config.max_attempts)
         if self._visualization_enabled:
             timeout_s += 2.0 * float(self.config.visualize_duration_ms) / 1000.0
         return self._worker.call(lambda: self._locate_book(template), timeout_s=max(1.0, timeout_s))
@@ -99,7 +99,7 @@ class D435BookSpineLocator:
     ) -> ShelfPlacementTarget:
         """Locate an exact horizontal-center point on the supplied neighboring spine."""
 
-        timeout_s = (float(self.config.frame_timeout_ms) / 1000.0) * (self.config.max_attempts + 2)
+        timeout_s = self._capture_budget_s(self.config.max_attempts)
         if self._visualization_enabled:
             timeout_s += 2.0 * float(self.config.visualize_duration_ms) / 1000.0
         return self._worker.call(
@@ -118,7 +118,7 @@ class D435BookSpineLocator:
         the device's frame number.
         """
 
-        timeout_s = (float(self.config.frame_timeout_ms) / 1000.0) * 2
+        timeout_s = self._capture_budget_s(1)
         return self._worker.call(self._capture_photo, timeout_s=max(1.0, timeout_s))
 
     def capture_frame(self) -> D435Frame:
@@ -129,8 +129,28 @@ class D435BookSpineLocator:
         ``frame.point_at_pixel``.
         """
 
-        timeout_s = (float(self.config.frame_timeout_ms) / 1000.0) * 2
+        timeout_s = self._capture_budget_s(1)
         return self._worker.call(self._capture_frame, timeout_s=max(1.0, timeout_s))
+
+    def _capture_budget_s(self, capture_count: int) -> float:
+        """Budget the worker call for warmup plus bounded frame waits.
+
+        The camera command always warms up before capturing. A worker timeout
+        shorter than that sequence leaves the worker using the camera after
+        the caller has already received a misleading command-timeout error.
+        """
+
+        frame_timeout_s = max(0.1, float(self.config.frame_timeout_ms) / 1000.0)
+        fps = max(1.0, float(self.config.fps))
+        warmup_s = float(max(0, int(self.config.warmup_frames))) / fps
+        # Allow each warmup/capture wait and all automatic pipeline-recovery
+        # attempts to consume their full SDK timeout.
+        waits = (
+            max(0, int(self.config.warmup_frames))
+            + max(1, int(capture_count))
+            + D435Device.MAX_PIPELINE_REBUILDS
+        )
+        return warmup_s + waits * frame_timeout_s + 2.0
 
     def transform_to_base(self, point_camera_m: Tuple[float, float, float]) -> Tuple[float, float, float]:
         """Map one camera-frame point into the arm base frame."""

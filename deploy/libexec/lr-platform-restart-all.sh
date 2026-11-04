@@ -2,9 +2,9 @@
 # LR 平台一键重启脚本：重启全部后端功能模块。
 #
 # 与 start-all.sh 一样是固定命令宿主脚本：不接受任何参数或调用方输入。
-# 安全约束：
-# - 只重启"已在运行"的机械臂服务，绝不把一次网页点击变成机械臂硬件上电；
-# - can0 只在掉线时恢复，不主动 bounce 正在使用的机械臂总线；
+# 约束：
+# - can0 在线时保持现状，避免重启总线干扰机械臂；
+# - BookArm 未运行时自动启动，服务就绪后再报告成功；
 # - Web / control-api 容器在本脚本返回后延迟数秒在后台重启，确保调用方能
 #   收到本次执行结果，随后接口短暂失联属于预期行为。
 # Every component emits: STEP <name> <OK|STARTED|RESTARTED|FAILED|SKIPPED> <message>
@@ -18,6 +18,31 @@ BOOKARM_SERVICE="${LR_BOOKARM_SYSTEMD_SERVICE:-lr-bookarm-takeout.service}"
 BOOKARM_CAN_SERVICE="${LR_BOOKARM_CAN_SYSTEMD_SERVICE:-lr-bookarm-can.service}"
 
 step() { printf 'STEP %s %s %s\n' "$1" "$2" "$3"; }
+
+bookarm_ready() {
+  local socket_path="${LR_BOOKARM_SOCKET_PATH:-/run/lr-bookarm/bookarm.sock}"
+  local token="${LR_BOOKARM_TOKEN:-}"
+  if [[ -z "$token" && -r /etc/lr-bookarm/bookarm.env ]]; then
+    token=$(sed -n 's/^LR_BOOKARM_TOKEN=//p' /etc/lr-bookarm/bookarm.env | tail -n 1)
+  fi
+  [[ -S "$socket_path" ]] || return 1
+  if [[ -n "$token" ]]; then
+    curl --unix-socket "$socket_path" -fsS --max-time 2 \
+      -H "Authorization: Bearer $token" \
+      http://localhost/api/v1/takeout/health >/dev/null 2>&1
+  else
+    curl --unix-socket "$socket_path" -fsS --max-time 2 \
+      http://localhost/api/v1/takeout/health >/dev/null 2>&1
+  fi
+}
+
+wait_bookarm_ready() {
+  for _ in $(seq 1 30); do
+    bookarm_ready && return 0
+    sleep 1
+  done
+  return 1
+}
 
 failed=0
 
@@ -33,15 +58,23 @@ else
 fi
 
 # ---------- BookArm ----------
-if systemctl is-active --quiet "$BOOKARM_SERVICE"; then
-  if sudo -n systemctl restart "$BOOKARM_SERVICE"; then
-    step bookarm-service RESTARTED "已重启 $BOOKARM_SERVICE"
+if ! ip link show can0 2>/dev/null | grep -q "state UP"; then
+  step bookarm-service SKIPPED "can0 未上线，未启动机械臂服务"
+  failed=1
+elif systemctl is-active --quiet "$BOOKARM_SERVICE"; then
+  if sudo -n systemctl restart "$BOOKARM_SERVICE" && wait_bookarm_ready; then
+    step bookarm-service RESTARTED "已重启 $BOOKARM_SERVICE，健康检查通过"
   else
-    step bookarm-service FAILED "重启失败；查看 journalctl -u $BOOKARM_SERVICE"
+    step bookarm-service FAILED "重启或健康检查失败；查看 journalctl -u $BOOKARM_SERVICE"
     failed=1
   fi
 else
-  step bookarm-service SKIPPED "$BOOKARM_SERVICE 未在运行，不自动给机械臂上电"
+  if sudo -n systemctl start "$BOOKARM_SERVICE" && wait_bookarm_ready; then
+    step bookarm-service STARTED "已启动 $BOOKARM_SERVICE，健康检查通过"
+  else
+    step bookarm-service FAILED "启动或健康检查失败；查看 journalctl -u $BOOKARM_SERVICE"
+    failed=1
+  fi
 fi
 
 # ---------- Robot runtime ----------

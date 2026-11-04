@@ -33,6 +33,7 @@ import type {
   MapVersion,
   MultiRoundBookEntry,
   RobotSummary,
+  TakeoutMode,
 } from '@/services/libraryRobot/types';
 import { errorMessage } from '@/utils/errorText';
 import AnnotationTargetSelect from '../components/AnnotationTargetSelect';
@@ -80,6 +81,7 @@ export default function MultiRoundPage() {
   const [robotId, setRobotId] = useState<string>('LR-01');
   const [takeBookIds, setTakeBookIds] = useState<string[]>([]);
   const [returnBookIds, setReturnBookIds] = useState<string[]>([]);
+  const [takeoutMode, setTakeoutMode] = useState<TakeoutMode>('standard');
   const [annotationId, setAnnotationId] = useState<string>();
   const [manualMode, setManualMode] = useState(false);
   const [manualTarget, setManualTarget] = useState({ x: 0, y: 0, yaw: 0 });
@@ -241,6 +243,7 @@ export default function MultiRoundPage() {
         target: sendNavigation ? target : undefined,
         takeBookIds,
         returnBookIds,
+        takeoutMode,
         liftSpeedLevel: 2,
         mapId,
         annotationId: sendNavigation && !manualMode ? annotationId : undefined,
@@ -375,6 +378,18 @@ export default function MultiRoundPage() {
               )}
             </Space>
           ) : null}
+          <Radio.Group
+            value={takeoutMode}
+            onChange={(event) =>
+              setTakeoutMode(event.target.value as TakeoutMode)
+            }
+            options={[
+              { value: 'standard', label: '普通取书' },
+              { value: 'mid', label: '中位取书' },
+            ]}
+            optionType="button"
+            disabled={taskActive}
+          />
           <Space wrap size={[12, 8]}>
             <Select
               mode="multiple"

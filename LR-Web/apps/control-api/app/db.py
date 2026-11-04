@@ -55,6 +55,7 @@ class RobotModel(Base):
     current_task: Mapped[str] = mapped_column(Text, nullable=False)
     map_version: Mapped[str] = mapped_column(String(120), nullable=False)
     map_id: Mapped[str | None] = mapped_column(String(80))
+    navigation_control_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="differential")
     pose: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     localization_status: Mapped[str] = mapped_column(String(40), nullable=False, default="unknown")
     localization_scan_mode: Mapped[str] = mapped_column(String(40), nullable=False, default="unknown")
@@ -228,6 +229,10 @@ class Database:
                 ),
                 "ALTER TABLE dispatch_tasks ADD COLUMN IF NOT EXISTS failure_reason TEXT",
                 "ALTER TABLE robots ADD COLUMN IF NOT EXISTS map_id VARCHAR(80)",
+                (
+                    "ALTER TABLE robots ADD COLUMN IF NOT EXISTS "
+                    "navigation_control_mode VARCHAR(32) NOT NULL DEFAULT 'differential'"
+                ),
                 "ALTER TABLE robots ADD COLUMN IF NOT EXISTS pose JSONB",
                 (
                     "ALTER TABLE robots ADD COLUMN IF NOT EXISTS "

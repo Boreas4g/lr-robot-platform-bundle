@@ -1,0 +1,119 @@
+{
+  "slots": {
+    "1": {
+      "pre_place": [
+        -0.115,
+        -0.305,
+        0.45,
+        1.570796,
+        -0.087266,
+        3.141593
+      ],
+      "place": [
+        -0.115,
+        -0.43,
+        0.445,
+        1.570796,
+        -0.087266,
+        3.141593
+      ],
+      "lower_place": [
+        -0.115,
+        -0.5,
+        0.32,
+        1.22173,
+        -0.087266,
+        3.141593
+      ],
+      "retreat": [
+        -0.115,
+        -0.375,
+        0.333,
+        1.570796,
+        0,
+        3.141593
+      ],
+      "pre_place_duration_s": 3,
+      "place_duration_s": 2,
+      "lower_place_duration_s": 1.5,
+      "retreat_duration_s": 2
+    },
+    "2": {
+      "pre_place": [
+        -0.065,
+        -0.305,
+        0.45,
+        1.570796,
+        -0.087266,
+        3.141593
+      ],
+      "place": [
+        -0.065,
+        -0.43,
+        0.435,
+        1.570796,
+        -0.087266,
+        3.141593
+      ],
+      "lower_place": [
+        -0.065,
+        -0.47,
+        0.37,
+        1.396263,
+        -0.087266,
+        3.141593
+      ],
+      "retreat": [
+        -0.065,
+        -0.375,
+        0.333,
+        1.570796,
+        0,
+        3.141593
+      ],
+      "pre_place_duration_s": 2,
+      "place_duration_s": 1.5,
+      "lower_place_duration_s": 1.5,
+      "retreat_duration_s": 1.5
+    },
+    "3": {
+      "pre_place": [
+        -0.005,
+        -0.305,
+        0.45,
+        1.570796,
+        -0.087266,
+        3.141593
+      ],
+      "place": [
+        -0.005,
+        -0.43,
+        0.435,
+        1.570796,
+        0,
+        3.141593
+      ],
+      "lower_place": [
+        -0.005,
+        -0.5,
+        0.32,
+        1.22173,
+        -0.087266,
+        3.141593
+      ],
+      "retreat": [
+        -0.005,
+        -0.375,
+        0.333,
+        1.570796,
+        0,
+        3.141593
+      ],
+      "pre_place_duration_s": 2,
+      "place_duration_s": 1.5,
+      "lower_place_duration_s": 1.5,
+      "retreat_duration_s": 1.5
+    }
+  },
+  "description": "BookArm book-stand slot calibration written by the tuning API; units: robot-base metres and radians."
+}

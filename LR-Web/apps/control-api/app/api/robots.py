@@ -25,6 +25,7 @@ from ..schemas import (
     MappingStatusResponse,
     MapVersion,
     MoveLiftRequest,
+    NavigationControlModeRequest,
     ResetEmergencyStopRequest,
     RobotCommand,
     RobotCommandRequest,
@@ -112,6 +113,18 @@ def cancel_annotation_navigation(
 def _require_robot(robot_id: str) -> None:
     if not any(item.id == robot_id for item in store.robots):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="机器人不存在")
+
+
+@router.put("/robots/{robot_id}/control-mode", response_model=RobotSummary)
+def set_navigation_control_mode(
+    robot_id: str,
+    request: NavigationControlModeRequest,
+    user: User = Depends(get_current_user),
+) -> RobotSummary:
+    try:
+        return store.set_navigation_control_mode(robot_id, request.controlMode, user)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
 
 
 def _is_timeout_error(error: object) -> bool:
@@ -228,6 +241,7 @@ def create_command(robot_id: str, request: RobotCommandRequest, user: User = Dep
         "bookarm_test_continue",
         "bookarm_test_cancel",
         "lift_move",
+        "shelf_move",
         "switch_map",
     }:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请使用对应的受控操作接口")
@@ -350,7 +364,13 @@ def get_mapping_status(robot_id: str, _: User = Depends(get_current_user)) -> Ma
 @router.post("/robots/{robot_id}/mapping/start", response_model=MappingActionResponse)
 def start_mapping(robot_id: str, _: User = Depends(get_current_user)) -> MappingActionResponse:
     _require_robot(robot_id)
-    return _validate_agent_payload(_mapping_agent_json("POST", "/mapping/start", {}), MappingActionResponse)
+    robot = next(item for item in store.robots if item.id == robot_id)
+    return _validate_agent_payload(
+        _mapping_agent_json(
+            "POST", "/mapping/start", {"controlMode": robot.navigationControlMode}
+        ),
+        MappingActionResponse,
+    )
 
 
 @router.post("/robots/{robot_id}/mapping/stop", response_model=MappingActionResponse)
@@ -363,7 +383,16 @@ def stop_mapping(robot_id: str, _: User = Depends(get_current_user)) -> MappingA
 def jog_mapping(robot_id: str, request: MappingJogRequest, _: User = Depends(get_current_user)) -> Any:
     # The agent only guarantees a 200/409 status for jog, so forward its body verbatim.
     _require_robot(robot_id)
-    return _mapping_agent_json("POST", "/mapping/jog", {"linear": request.linear, "angular": request.angular})
+    robot = next(item for item in store.robots if item.id == robot_id)
+    return _mapping_agent_json(
+        "POST",
+        "/mapping/jog",
+        {
+            "linear": request.linear,
+            "angular": request.angular,
+            "controlMode": robot.navigationControlMode,
+        },
+    )
 
 
 @router.get("/robots/{robot_id}/mapping/snapshot.png")

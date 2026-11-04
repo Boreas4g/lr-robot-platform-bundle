@@ -10,6 +10,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/deployment-mode.sh"
+require_local_deployment || exit 1
 # shellcheck source=env.sh
 . "$SCRIPT_DIR/env.sh"
 

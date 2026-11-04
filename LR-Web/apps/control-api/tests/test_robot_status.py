@@ -30,6 +30,13 @@ def test_no_stale_offline_watchdog_is_installed() -> None:
     assert not hasattr(store, "_apply_stale_offline")
 
 
+def test_legacy_empty_health_is_treated_as_not_ready() -> None:
+    from app.schemas import RobotHealth
+
+    health = RobotHealth.model_validate({})
+    assert not any(health.model_dump().values())
+
+
 def test_offline_robot_command_reports_offline(robot_slot) -> None:
     robot = _set_robot(robot_slot, status="offline")
     from app.schemas import RobotCommandRequest, User

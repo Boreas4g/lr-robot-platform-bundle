@@ -34,10 +34,11 @@ def generate_launch_description():
                         "k_yaw": 1.0,
                         "stage_timeout_sec": 180.0,
                         "timeout_sec": 180.0,
-                        # 控制逻辑与巡逻精调（point3_fine_tune_node）一致：base 系
-                        # 误差、x→y→yaw 分阶段纯 P 控制，速度直发 /cmd_vel（不经
-                        # velocity_smoother / collision_monitor）。Nav2 只负责粗
-                        # 到点，最终精度由本节点的精调阶段保证。
+                        # 控制逻辑与巡逻精调（point3_fine_tune_node）一致：普通精调
+                        # 执行 x→y→yaw，shelf_move 只执行 x，共用 x 容差，速度可由任务覆盖。
+                        # 速度直发 /cmd_vel（不经 velocity_smoother / collision_monitor）。
+                        # 差速原地偏航，类阿克曼偏航由网关逐任务切换为 1m 低速圆弧。
+                        # Nav2 只负责粗到点，最终精度由本节点的精调阶段保证。
                     }
                 ],
             ),

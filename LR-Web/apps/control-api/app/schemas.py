@@ -45,15 +45,15 @@ class AuthResponse(BaseModel):
 
 
 class RobotHealth(BaseModel):
-    navigation: bool
-    chassis: bool
-    arm: bool
+    navigation: bool = False
+    chassis: bool = False
+    arm: bool = False
     # Existing deployed robots do not have this field until their Gateway is upgraded.
     rod: bool = False
     # Same upgrade window as rod: Gateways without imuReady telemetry default to False.
     imu: bool = False
-    lift: bool
-    camera: bool
+    lift: bool = False
+    camera: bool = False
     # Absolute layer targets are unsafe until the lift can home and report that
     # it has reached its commanded physical position.
     liftAbsolutePositioningReady: bool = False
@@ -84,6 +84,7 @@ class RobotSummary(BaseModel):
     currentTask: str
     mapVersion: str
     mapId: str | None = None
+    navigationControlMode: Literal["differential", "ackermann"] = "differential"
     pose: RobotPose | None = None
     localizationStatus: Literal[
         "starting",
@@ -109,6 +110,10 @@ class CreateRobotRequest(BaseModel):
     gatewayHost: str = Field(min_length=1, max_length=255)
 
 
+class NavigationControlModeRequest(BaseModel):
+    controlMode: Literal["differential", "ackermann"]
+
+
 TaskStatus = Literal["queued", "running", "paused", "failed", "completed", "cancelled", "recovery_required"]
 
 
@@ -116,7 +121,7 @@ class DispatchTask(BaseModel):
     id: str
     type: Literal[
         "borrow", "return", "inventory", "navigate", "cruise", "charge", "arm_test", "takeout",
-        "fine_tune", "multi_round",
+        "fine_tune", "multi_round", "shelf_internal", "shelf_move",
     ]
     robotId: str
     target: str
@@ -130,7 +135,7 @@ class DispatchTask(BaseModel):
     loopCount: int | None = Field(default=None, ge=1, le=10)
     bookId: str | None = None
     bookTitle: str | None = None
-    workflowMode: Literal["takeout", "putback", "putback2", "tail_putback"] | None = None
+    workflowMode: Literal["takeout", "mid_takeout", "putback", "putback2", "tail_putback"] | None = None
     deliveryAnnotationId: str | None = None
     deliveryLabel: str | None = None
     workflowId: str | None = None
@@ -173,6 +178,17 @@ class MapImportRequest(BaseModel):
     # Accepts generated hex ids as well as vehicle-registered names such as
     # MAP-1813LAB, matching the map-id pattern used by the vehicle routes.
     id: str | None = Field(default=None, pattern=r"^MAP-[A-Za-z0-9_-]{1,80}$")
+
+
+class MapEditPoint(BaseModel):
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+    value: Literal[0, 100]
+
+
+class MapEditRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    points: list[MapEditPoint] = Field(min_length=1, max_length=20000)
 
 
 class MapVersion(BaseModel):
@@ -266,9 +282,10 @@ class CompleteTakeoutTarget(BaseModel):
 
 
 class CompleteTakeoutRequest(BaseModel):
-    """Navigate to a shelf target, then run the on-robot takeout workflow.
-    With sendNavigation (default) the robot navigates to the target first;
-    without it the arm starts in place."""
+    """Optionally navigate to a shelf target, then run the on-robot takeout workflow.
+
+    Without sendNavigation, the workflow also skips post-vision vehicle alignment.
+    """
 
     robotId: str = Field(min_length=1, max_length=80)
     templateId: str = Field(min_length=1, max_length=80)
@@ -277,6 +294,7 @@ class CompleteTakeoutRequest(BaseModel):
     # Physical book-stand slot the book is placed into; occupancy is not
     # tracked (books may be placed manually), so the slot is always explicit.
     destinationSlot: int = Field(ge=1, le=5)
+    takeoutMode: Literal["standard", "mid"] = "standard"
     liftSpeedLevel: int = Field(default=2, ge=1, le=3)
     bookId: str | None = Field(default=None, max_length=80)
     # Optional map context for the navigate command; defaults to the robot's
@@ -331,6 +349,33 @@ class CompleteReturnRequest(BaseModel):
         return self
 
 
+class ShelfInternalRequest(BaseModel):
+    """Move one book shelf1 → shelf2 → shelf1 using straight X-only base moves."""
+
+    robotId: str = Field(min_length=1, max_length=80)
+    bookId: str = Field(min_length=1, max_length=80)
+    referenceBook1Id: str = Field(min_length=1, max_length=80)
+    referenceBook2Id: str = Field(min_length=1, max_length=80)
+    shelf1Target: CompleteTakeoutTarget
+    shelf2Target: CompleteTakeoutTarget
+    shelf1LiftHeightMm: float = Field(ge=10.0, le=1700.0)
+    shelf2LiftHeightMm: float = Field(ge=10.0, le=1700.0)
+    moveSpeedMps: float = Field(default=0.05, ge=0.0, le=0.50)
+    enableVehicleAlignment: bool = True
+    bookStandSlot: int = Field(ge=1, le=5)
+    takeoutMode: Literal["standard", "mid"] = "standard"
+    liftSpeedLevel: int = Field(default=2, ge=1, le=3)
+    mapId: str | None = Field(default=None, max_length=80)
+    shelf1AnnotationId: str | None = Field(default=None, max_length=80)
+    shelf2AnnotationId: str | None = Field(default=None, max_length=80)
+
+    @model_validator(mode="after")
+    def reference_books_stay_on_their_shelves(self) -> Self:
+        if len({self.bookId, self.referenceBook1Id, self.referenceBook2Id}) != 3:
+            raise ValueError("目标书、定位书1和定位书2必须互不相同")
+        return self
+
+
 class Book(BaseModel):
     """A managed book: name, spine-library template (its spine image), and
     the shelf height used as the lift target when taking or returning it."""
@@ -377,6 +422,7 @@ class StressTestTemplateConfig(BaseModel):
 
     takeouts: list[StressTestTakeoutAction] = Field(min_length=1, max_length=5)
     returns: list[StressTestReturnAction] = Field(default_factory=list, max_length=5)
+    takeoutMode: Literal["standard", "mid"] = "standard"
     liftSpeedLevel: int = Field(default=3, ge=1, le=3)
     maxRounds: int | None = Field(default=None, ge=1)
     stopOnFailure: bool = True
@@ -448,6 +494,7 @@ class MultiRoundRequest(BaseModel):
     target: CompleteTakeoutTarget | None = None
     takeBookIds: list[str] = Field(min_length=1, max_length=5)
     returnBookIds: list[str] = Field(default_factory=list, max_length=5)
+    takeoutMode: Literal["standard", "mid"] = "standard"
     liftSpeedLevel: int = Field(default=2, ge=1, le=3)
     mapId: str | None = Field(default=None, max_length=80)
     annotationId: str | None = Field(default=None, max_length=80)
@@ -463,6 +510,7 @@ class MultiRoundRequest(BaseModel):
 CommandName = Literal[
     "navigate",
     "fine_tune",
+    "shelf_move",
     "cruise",
     "set_initial_pose",
     "auto_localize",
@@ -483,6 +531,7 @@ CommandName = Literal[
     "bookarm_test_cancel",
     "lift_move",
     "switch_map",
+    "set_control_mode",
 ]
 
 

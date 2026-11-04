@@ -139,12 +139,13 @@ class TakeBookUseCase:
     def _acquire_target(self, request: TakeBookRequest, context: Dict[str, Any]) -> Dict[str, Any]:
         target = self.vision.locate_book(request.spine_template)
         context["target"] = target
+        grasp_poses = take_book_grasp_poses(target, self.plan)
         return {
             "book_target_raw_base_pose": target.raw_pose.values(),
             "book_target_grasp_base_pose": target.grasp_pose.values(),
             "grasp_chain_poses": {
                 label: pose.values()
-                for label, pose in self._grasp_poses(target).items()
+                for label, pose in grasp_poses.items()
             },
             "capture_id": target.capture_id,
             "confidence": target.confidence,
@@ -155,7 +156,7 @@ class TakeBookUseCase:
     ) -> Dict[str, Any]:
         """识别后校验：书脊倾斜超阈值即中止；偏离正中则缓速脉冲对齐并更新位姿。"""
 
-        return post_vision_check_align(
+        details = post_vision_check_align(
             self.vision,
             request.spine_template,
             context,
@@ -165,7 +166,10 @@ class TakeBookUseCase:
             arm=self.arm,
             engine=self.engine,
             task=task,
+            vehicle_alignment_enabled=request.enable_vehicle_alignment,
         )
+        context.pop("grasp_poses", None)
+        return details
 
     def _prepare_arm_for_grasp(self) -> Dict[str, Any]:
         """Ensure the arm is enabled and safely positioned at the debug joint pose."""
@@ -201,7 +205,7 @@ class TakeBookUseCase:
 
     def _grasp_poses(self, target: BookTarget) -> Dict[str, BasePose]:
         """Grasp-chain poses in motion order, shared with the reachability precheck."""
-        return take_book_grasp_poses(target, self.plan)
+        return take_book_grasp_poses(target, self.plan, self.arm.check_pose_reachable)
 
     def _check_reachability(
         self, context: Dict[str, Any], placement: Optional[SlotPlacementPlan]
@@ -216,9 +220,11 @@ class TakeBookUseCase:
         target = context.get("target")
         if not isinstance(target, BookTarget):
             raise RuntimeError("book target is missing")
+        poses = self._grasp_poses(target)
+        context["grasp_poses"] = poses
         seed: JointPose = self.plan.debug_joint
         checked = []
-        for label, pose in self._grasp_poses(target).items():
+        for label, pose in poses.items():
             seed = self.arm.check_pose_reachable(pose, seed, label=label)
             checked.append(label)
         if placement is not None:
@@ -238,7 +244,7 @@ class TakeBookUseCase:
             raise RuntimeError("book target is missing")
         plan = self.plan
 
-        poses = self._grasp_poses(target)
+        poses = context.get("grasp_poses") or self._grasp_poses(target)
         pregrasp = poses["arm_pregrasp"]
         approach = poses["arm_approach"]
         fine_grasp = poses["arm_fine_grasp"]

@@ -27,10 +27,10 @@ from bookarm.infrastructure.config.profiles import (
 
 
 class ValidateSpeedLevelTests(unittest.TestCase):
-    def test_accepts_the_three_levels(self):
-        for level in ("slow", "standard", "fast"):
+    def test_accepts_the_four_levels(self):
+        for level in ("slow", "standard", "fast", "ultra"):
             self.assertEqual(validate_speed_level(level), level)
-        self.assertEqual(SPEED_LEVELS, ("slow", "standard", "fast"))
+        self.assertEqual(SPEED_LEVELS, ("slow", "standard", "fast", "ultra"))
         self.assertEqual(DEFAULT_SPEED_LEVEL, "standard")
         self.assertEqual(tuple(SPEED_PROFILES), SPEED_LEVELS)
 
@@ -60,14 +60,14 @@ class ApplySpeedLevelTests(unittest.TestCase):
         self.assertEqual(plan.pregrasp_duration_s, 1.8)
         self.assertEqual(plan.approach_duration_s, 1.2)
         self.assertEqual(plan.fine_grasp_duration_s, 1.2)
-        self.assertEqual(plan.post_grasp_duration_s, 1.2)
+        self.assertEqual(plan.post_grasp_duration_s, 2.0)
         self.assertEqual(plan.rod_speed, 1800)
         gripper = plan.gripper
         self.assertEqual(gripper.open_speed_deg_s, 60.12)
         self.assertEqual(gripper.close_speed_deg_s, 60.12)
-        self.assertEqual(gripper.command_lead_s, 0.15)
+        self.assertEqual(gripper.command_lead_s, 0.39)
         self.assertEqual(gripper.stall_time_s, 0.51)
-        self.assertEqual(gripper.contact_hold_duration_s, 0.6)
+        self.assertEqual(gripper.contact_hold_duration_s, 1.0)
         # Contact-judgement and torque constants never scale with the level.
         self.assertEqual(gripper.min_monitor_s, 0.4)
         self.assertEqual(gripper.start_boost_s, 0.4)
@@ -75,7 +75,7 @@ class ApplySpeedLevelTests(unittest.TestCase):
         self.assertEqual(gripper.timeout_s, 10.0)
         self.assertEqual(gripper.effort, 0.5)
         self.assertEqual(gripper.carry_effort, 0.2)
-        self.assertEqual(gripper.stall_lead_threshold_deg, 3.0)
+        self.assertEqual(gripper.stall_lead_threshold_deg, 10.0)
         self.assertEqual(gripper.stall_tolerance_deg, 0.4)
         self.assertEqual(gripper.close_deg, 108.5)
         # Non-speed plan fields are untouched.
@@ -84,6 +84,19 @@ class ApplySpeedLevelTests(unittest.TestCase):
         self.assertEqual(plan.joint_tolerance_rad, 0.08)
         self.assertEqual(plan.pregrasp_offset_cm, (10.0, 0.0, 0.0))
 
+    def test_ultra_scales_take_book_beyond_fast(self):
+        plan = apply_speed_level(replace(TakeBookMotionPlan(), speed_level="ultra"))
+        self.assertEqual(plan.speed_level, "ultra")
+        self.assertEqual(plan.zero_duration_s, 1.35)
+        self.assertEqual(plan.approach_duration_s, 0.9)
+        self.assertEqual(plan.rod_speed, 2000)
+        self.assertEqual(plan.gripper.open_speed_deg_s, 66.8)
+        self.assertEqual(plan.gripper.close_speed_deg_s, 66.8)
+        self.assertEqual(plan.gripper.command_lead_s, 0.325)
+        self.assertEqual(plan.gripper.stall_time_s, 0.45)
+        self.assertEqual(plan.gripper.contact_hold_duration_s, 1.0)
+        self.assertEqual(plan.post_grasp_duration_s, 2.0)
+
     def test_slow_scales_take_book_uniformly(self):
         plan = apply_speed_level(replace(TakeBookMotionPlan(), speed_level="slow"))
         self.assertEqual(plan.zero_duration_s, 4.5)
@@ -91,9 +104,9 @@ class ApplySpeedLevelTests(unittest.TestCase):
         self.assertEqual(plan.rod_speed, 700)
         self.assertEqual(plan.gripper.open_speed_deg_s, 11.69)
         self.assertEqual(plan.gripper.close_speed_deg_s, 11.69)
-        self.assertEqual(plan.gripper.command_lead_s, 0.4)
+        self.assertEqual(plan.gripper.command_lead_s, 1.04)
         self.assertEqual(plan.gripper.stall_time_s, 0.78)
-        self.assertEqual(plan.gripper.contact_hold_duration_s, 1.2)
+        self.assertEqual(plan.gripper.contact_hold_duration_s, 1.0)
 
     def test_fast_scales_every_mid_return_duration(self):
         plan = apply_speed_level(replace(MidReturnMotionPlan(), speed_level="fast"))
@@ -124,7 +137,7 @@ class ApplySpeedLevelTests(unittest.TestCase):
         self.assertEqual(plan.rod_speed, 1800)
         # Insert geometry is not speed-coupled.
         self.assertEqual(plan.target_y_offset_cm, 4.0)
-        self.assertEqual(plan.pre_insert_x_m, -0.33)
+        self.assertEqual(plan.pre_insert_x_max_m, -0.33)
 
     def test_fast_scales_return_book(self):
         plan = apply_speed_level(replace(ReturnBookMotionPlan(), speed_level="fast"))

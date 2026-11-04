@@ -39,14 +39,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   acknowledgeAlert,
-  type BookarmStartPolicy,
   getAlerts,
-  getBookarmStartPolicy,
   getRobotRealtimeState,
   getRobots,
   getTasks,
   restartAllServices,
-  setBookarmStartPolicy,
   type StartAllResult,
   startAllServices,
   subscribeRobotRealtime,
@@ -94,6 +91,8 @@ const taskType: Record<DispatchTask['type'], string> = {
   takeout: '完整取书',
   multi_round: '多轮取还书',
   fine_tune: '低速精调',
+  shelf_internal: '架内取还书',
+  shelf_move: '架内移动',
 };
 
 export default function OverviewPage() {
@@ -119,8 +118,6 @@ export default function OverviewPage() {
   const [hwLoading, setHwLoading] = useState(false);
   const [hwError, setHwError] = useState<string>();
   const [ackingAlertId, setAckingAlertId] = useState<string>();
-  const [armPolicy, setArmPolicy] = useState<BookarmStartPolicy>();
-  const [armPolicyLoading, setArmPolicyLoading] = useState(false);
   const { setInitialState } = useModel('@@initialState');
   const debugMode = useDebugMode();
   const [debugModalOpen, setDebugModalOpen] = useState(false);
@@ -151,35 +148,6 @@ export default function OverviewPage() {
       history.push('/overview/dashboard');
     }
   }, [message, bumpLayout]);
-
-  const refreshArmPolicy = useCallback(async () => {
-    try {
-      setArmPolicy(await getBookarmStartPolicy());
-    } catch {
-      setArmPolicy(undefined);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshArmPolicy();
-  }, [refreshArmPolicy]);
-
-  async function toggleArmPolicy(allow: boolean) {
-    setArmPolicyLoading(true);
-    try {
-      const updated = await setBookarmStartPolicy(allow);
-      setArmPolicy(updated);
-      if (updated.allow) {
-        message.success('已确认：之后的一键启动将配置 can0 并启动机械臂服务。');
-      } else {
-        message.info('已取消确认：一键启动将跳过机械臂硬件步骤。');
-      }
-    } catch (error) {
-      message.error(errorMessage(error, '更新机械臂硬件启动确认失败。'));
-    } finally {
-      setArmPolicyLoading(false);
-    }
-  }
 
   async function ackAlert(alert: AlertRecord) {
     setAckingAlertId(alert.id);
@@ -219,19 +187,8 @@ export default function OverviewPage() {
     try {
       const result = await startAllServices();
       setActionResult({ kind: 'start', result });
-      void refreshArmPolicy();
       if (result.ok) message.success('一键启动完成，全部依赖项就绪。');
       else message.warning('一键启动完成，但有组件失败，请查看明细。');
-      const hardwareSkipped = result.steps.some(
-        (step) =>
-          (step.name === 'can0' || step.name === 'bookarm-service') &&
-          step.status === 'SKIPPED',
-      );
-      if (hardwareSkipped) {
-        message.info(
-          '机械臂硬件步骤被跳过：现场检查后点击「机械臂硬件启动确认」放行，再重新一键启动。',
-        );
-      }
     } catch (error) {
       message.error(errorMessage(error, '一键启动失败。'));
     } finally {
@@ -352,38 +309,6 @@ export default function OverviewPage() {
         >
           一键启动
         </Button>,
-        armPolicy?.allow ? (
-          <Popconfirm
-            key="arm-policy"
-            title="取消机械臂硬件启动确认？"
-            description="取消后，一键启动将跳过 can0 配置与机械臂服务启动。"
-            okText="取消确认"
-            cancelText="返回"
-            onConfirm={() => void toggleArmPolicy(false)}
-          >
-            <Button icon={<CheckCircleOutlined />} loading={armPolicyLoading}>
-              机械臂硬件：已确认
-            </Button>
-          </Popconfirm>
-        ) : (
-          <Popconfirm
-            key="arm-policy"
-            title="确认允许一键启动拉起机械臂硬件？"
-            description="仅在已现场确认急停有效、供电正常、关节 3/5 无异常后开启。开启后每次一键启动都会配置 can0 并启动机械臂服务。"
-            okText="现场确认并开启"
-            cancelText="取消"
-            okButtonProps={{ danger: true }}
-            onConfirm={() => void toggleArmPolicy(true)}
-          >
-            <Button
-              danger
-              icon={<WarningOutlined />}
-              loading={armPolicyLoading}
-            >
-              机械臂硬件启动确认
-            </Button>
-          </Popconfirm>
-        ),
         <Popconfirm
           key="restart-all"
           title="重启全部后端功能模块？"

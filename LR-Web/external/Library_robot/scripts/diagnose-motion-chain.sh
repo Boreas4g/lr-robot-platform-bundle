@@ -47,17 +47,19 @@ show_lifecycle() {
 }
 
 echo "LR motion-chain diagnostic (read-only; no velocity command is published)"
-echo "Expected path: /cmd_vel_nav -> velocity_smoother -> /cmd_vel_smoothed -> collision_monitor -> /cmd_vel -> chassis driver"
+echo "Expected path: /cmd_vel_nav -> curvature_limiter -> /cmd_vel_limited -> velocity_smoother -> /cmd_vel_smoothed -> collision_monitor -> /cmd_vel -> chassis driver"
 echo
 echo "=== matching ROS nodes ==="
-timeout 5 ros2 node list | rg '(^|/)(edge_gateway|velocity_smoother|collision_monitor|ddsm_hat_diff_drive)' || true
+timeout 5 ros2 node list | rg '(^|/)(edge_gateway|curvature_limiter|velocity_smoother|collision_monitor|ddsm_hat_diff_drive)' || true
 
 show_lifecycle /velocity_smoother
 show_lifecycle /collision_monitor
 show_lifecycle /lifecycle_manager_navigation
 show_topic /cmd_vel_nav
+show_topic /cmd_vel_limited
 show_topic /cmd_vel_smoothed
 show_topic /cmd_vel
+show_topic /navigation/control_mode
 show_topic /collision_monitor_state
 show_topic /wheel_speed_source
 show_topic /wheel_speeds
@@ -66,8 +68,8 @@ if [[ "$watch_mode" == true ]]; then
   echo
   echo "=== passive velocity observation ==="
   echo "现场维护人员现在可从控制站发起一次已授权的短促低速点动。"
-  echo "脚本会并行观察三个话题最多 12 秒，绝不发送 ROS 控制命令。"
-  for topic in /cmd_vel_nav /cmd_vel_smoothed /cmd_vel; do
+  echo "脚本会并行观察四个话题最多 12 秒，绝不发送 ROS 控制命令。"
+  for topic in /cmd_vel_nav /cmd_vel_limited /cmd_vel_smoothed /cmd_vel; do
     timeout 12 ros2 topic echo "$topic" geometry_msgs/msg/Twist --once &
   done
   wait || true

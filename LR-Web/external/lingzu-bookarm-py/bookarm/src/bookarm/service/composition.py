@@ -17,6 +17,7 @@ from typing import Optional
 from bookarm.api.sdk import BookArmSDK
 from bookarm.application.task_manager import TaskManager
 from bookarm.application.use_cases.mid_return import MidReturnBookUseCase
+from bookarm.application.use_cases.mid_takeout import MidTakeoutUseCase
 from bookarm.infrastructure.vehicle_align import VehicleAlignClient
 from bookarm.application.use_cases.return_book import ReturnBookUseCase
 from bookarm.application.use_cases.return_book_to_end import ReturnBookToEndUseCase
@@ -27,6 +28,7 @@ from bookarm.devices.camera.service import D435BookSpineLocator, D435BookSpineLo
 from bookarm.devices.lift.service import AimLiftService, LiftDeviceConfig
 from bookarm.devices.rod.service import RodDeviceConfig, RodMotorService
 from bookarm.domain.plans.mid_return import MidReturnMotionPlan
+from bookarm.domain.plans.mid_takeout import MidTakeoutMotionPlan
 from bookarm.domain.plans.return_book import ReturnBookMotionPlan
 from bookarm.domain.plans.take_book import TakeBookMotionPlan
 from bookarm.infrastructure.config.calibration import (
@@ -35,6 +37,7 @@ from bookarm.infrastructure.config.calibration import (
 )
 from bookarm.infrastructure.config.profiles import (
     load_mid_return_motion_plan,
+    load_mid_takeout_motion_plan,
     load_return_book_motion_plan,
     load_take_book_motion_plan,
 )
@@ -105,6 +108,8 @@ def create_combined_runtime(
     take_book_profile_path: Optional[Path] = None,
     return_book_profile_path: Optional[Path] = None,
     mid_return_profile_path: Optional[Path] = None,
+    mid_takeout_profile_path: Optional[Path] = None,
+    mid_takeout_book_stand_slots_path: Optional[Path] = None,
     task_manager: Optional[TaskManager] = None,
     arm_feedback_max_age_s: Optional[float] = None,
     camera_debug_capture_dir: Optional[Path] = None,
@@ -141,6 +146,11 @@ def create_combined_runtime(
         mid_return_plan = MidReturnMotionPlan()
     else:
         mid_return_plan = load_mid_return_motion_plan(Path(mid_return_profile_path))
+    mid_takeout_plan: MidTakeoutMotionPlan
+    if mid_takeout_profile_path is None:
+        mid_takeout_plan = MidTakeoutMotionPlan()
+    else:
+        mid_takeout_plan = load_mid_takeout_motion_plan(Path(mid_takeout_profile_path))
     arm_config = (_load_device_config("arm", ArmDeviceConfig())
                   if os.environ.get("LR_BOOKARM_CONFIG_DIR") else ArmDeviceConfig())
     if arm_feedback_max_age_s is not None:
@@ -194,6 +204,15 @@ def create_combined_runtime(
     reservation = RuntimeReservation()
     vehicle_align = VehicleAlignClient()
     pickup_slots = load_book_stand_pickup_slots(Path(book_stand_pickup_slots_path))
+    mid_takeout_slots = load_book_stand_slots(
+        Path(
+            mid_takeout_book_stand_slots_path
+            or Path(__file__).resolve().parents[3]
+            / "config"
+            / "calibration"
+            / "midtakeout_book_stand_slots.json"
+        )
+    )
     sdk = BookArmSDK(
         task_manager=manager,
         take_book=TakeBookUseCase(
@@ -228,6 +247,17 @@ def create_combined_runtime(
             rod=rod,
             pickup_slots=pickup_slots,
             plan=mid_return_plan,
+            vehicle_align=vehicle_align,
+        ),
+        mid_takeout=MidTakeoutUseCase(
+            task_manager=manager,
+            reservation=reservation,
+            lift=lift,
+            vision=camera,
+            arm=arm,
+            rod=rod,
+            slots=mid_takeout_slots,
+            plan=mid_takeout_plan,
             vehicle_align=vehicle_align,
         ),
     )

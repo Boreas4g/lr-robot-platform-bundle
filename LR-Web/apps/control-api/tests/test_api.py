@@ -327,7 +327,12 @@ def test_manual_jog_is_unauthenticated_and_goes_straight_to_mqtt() -> None:
     )
     assert jog.status_code == 202
     assert jog.json()["command"] == "manual_jog"
-    assert jog.json()["payload"] == {"linear": 0.1, "angular": 0.2, "durationMs": 500}
+    assert jog.json()["payload"] == {
+        "linear": 0.1,
+        "angular": 0.2,
+        "durationMs": 500,
+        "controlMode": "differential",
+    }
     # 轻量化直控：实时点动不留下命令记录。
     assert jog.json()["commandId"] not in store.commands
 
@@ -349,6 +354,39 @@ def test_manual_jog_is_unauthenticated_and_goes_straight_to_mqtt() -> None:
         json={"linear": 0.1, "angular": 0.0, "durationMs": 1000},
     )
     assert over_duration.status_code == 409
+
+
+def test_navigation_control_mode_is_persistent_and_used_by_manual_jog() -> None:
+    from app.store import store
+
+    robot_index = next(index for index, item in enumerate(store.robots) if item.id == "LR-01")
+    original_robot = store.robots[robot_index]
+    store.robots[robot_index] = original_robot.model_copy(update={"status": "idle"})
+    try:
+        response = client.put(
+            "/api/v1/robots/LR-01/control-mode",
+            json={"controlMode": "ackermann"},
+        )
+        assert response.status_code == 200
+        assert response.json()["navigationControlMode"] == "ackermann"
+
+        jog = client.post(
+            "/api/v1/robots/LR-01/manual-control/jog",
+            json={"linear": 0.1, "angular": 0.2, "durationMs": 500},
+        )
+        assert jog.status_code == 202
+        assert jog.json()["payload"]["controlMode"] == "ackermann"
+
+        store.robots[robot_index] = store.robots[robot_index].model_copy(
+            update={"status": "navigating"}
+        )
+        rejected = client.put(
+            "/api/v1/robots/LR-01/control-mode",
+            json={"controlMode": "differential"},
+        )
+        assert rejected.status_code == 409
+    finally:
+        store.robots[robot_index] = original_robot
 
 
 def test_admin_can_clear_only_the_platform_emergency_stop_lock() -> None:

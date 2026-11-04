@@ -17,6 +17,7 @@ from bookarm.api.requests import (
     ReturnBookStage,
     TakeBookRequest,
     TakeBookStage,
+    TakeoutMode,
 )
 from bookarm.domain.models.book import BookIdentity, SpineTemplate
 from bookarm.domain.models.shelf import BookStandSlot
@@ -196,11 +197,14 @@ def create_app(
         template_id: Annotated[Optional[str], Form()] = None,
         destination_slot: Annotated[int, Form(ge=1, le=5)] = 1,
         lift_speed_level: Annotated[int, Form(ge=1, le=3)] = 1,
+        enable_vehicle_alignment: Annotated[bool, Form()] = True,
         stop_after_stage: Annotated[str, Form()] = TakeBookStage.ARM_STANDBY.value,
         book_id: Annotated[Optional[str], Form()] = None,
+        takeout_mode: Annotated[str, Form()] = TakeoutMode.STANDARD.value,
     ) -> WorkflowTaskView:
         try:
             stop_after = TakeBookStage(stop_after_stage)
+            mode = TakeoutMode(takeout_mode)
         except ValueError as error:
             choices = ", ".join(stage.value for stage in TakeBookStage)
             raise HTTPException(
@@ -220,7 +224,9 @@ def create_app(
             spine_template=SpineTemplate(template_path),
             destination_slot=BookStandSlot(destination_slot),
             lift_speed_level=lift_speed_level,
+            enable_vehicle_alignment=enable_vehicle_alignment,
             stop_after_stage=stop_after,
+            takeout_mode=mode,
         )
         try:
             task = runner.submit_take(request)
@@ -294,6 +300,7 @@ def create_app(
         template_id: Annotated[Optional[str], Form()] = None,
         source_slot: Annotated[int, Form(ge=1, le=5)] = 1,
         lift_speed_level: Annotated[int, Form(ge=1, le=3)] = 1,
+        enable_vehicle_alignment: Annotated[bool, Form()] = True,
         stop_after_stage: Annotated[str, Form()] = MidReturnStage.SHELF_INSERT.value,
         book_id: Annotated[Optional[str], Form()] = None,
         injected_grasp_pose: Annotated[Optional[str], Form()] = None,
@@ -334,6 +341,7 @@ def create_app(
             left_neighbor_spine_template=SpineTemplate(template_path),
             source_slot=BookStandSlot(source_slot),
             lift_speed_level=lift_speed_level,
+            enable_vehicle_alignment=enable_vehicle_alignment,
             stop_after_stage=stop_after,
             injected_grasp_pose=injected_pose,
         )

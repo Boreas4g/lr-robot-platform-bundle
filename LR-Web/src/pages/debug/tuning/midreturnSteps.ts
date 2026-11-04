@@ -369,19 +369,34 @@ export const midreturnSteps: TuningStepDef[] = [
     fields: [openDegField('pickup_open_deg', '开爪角度'), openSpeedField],
   },
   {
+    title: '识别目标书（插入前）',
+    hint: '放回旧书后、书槽取书前，用「准备」的同一书脊模板重新识别目标书；后续预插入位/插入位均基于这次识别的目标点计算。',
+    fields: [],
+  },
+  {
     title: '运动到书槽',
     hint: '使用下方「书立取回槽位」卡片中所选格口的 pre_grasp/grasp 位姿与时长：先 MovePByJ 到 pre_grasp，再 MoveL 到 grasp。依赖「准备」选择的格口。',
     fields: [],
   },
   {
-    title: '闭合夹爪（书槽）',
-    hint: '夹住书立上的待还书；复用「闭合夹爪」卡片的闭爪参数。',
-    fields: [],
+    title: '轻闭合夹爪并向下移动',
+    hint: '在书槽完全闭合前，先轻闭合到指定角度，再沿 Z 轴向下移动指定距离；下移时长复用槽位的 grasp 时长。',
+    fields: [
+      openDegField('pickup_light_close_deg', '轻闭合角度'),
+      {
+        path: 'pickup_light_close_down_cm',
+        label: '下移距离',
+        unit: 'cm',
+        min: 0,
+        step: 0.5,
+        precision: 1,
+      },
+    ],
   },
   {
-    title: '回调试位（取书后）',
-    hint: '先 MoveL 撤到所选格口的 pre_grasp（撤回时长在槽位卡片编辑），再 MoveJ 回调试位，让开相机视野。',
-    fields: debugFields,
+    title: '闭合夹爪（书槽）',
+    hint: '接触书本后进入持续自适应夹持；随后持书直接进入预插入流程，复用「闭合夹爪」卡片的闭爪参数。',
+    fields: [],
   },
   {
     title: '推杆',
@@ -413,22 +428,22 @@ export const midreturnSteps: TuningStepDef[] = [
     ],
   },
   {
-    title: '识别目标书（插入前）',
-    hint: '放回旧书、取回待还书后，用「准备」的同一书脊模板重新识别目标书；放回过程可能让旧书移位，后续预插入位/插入位均基于这次识别的目标点计算。',
+    title: '到预抓取位',
+    hint: '推杆后先 MoveL 返回所选书槽的 pre_grasp，避免从抓取位置直接进入预插入位时碰撞书槽；随后再进入预插入位。',
     fields: [],
   },
   {
     title: '预插入位',
-    hint: '与取书的预抓取位同理：先 MovePByJ 到插入位外侧的预插入位，避免带着书横扫刮碰书立上的其他书。x 为机械臂本体坐标系下的固定值（相对识别点的偏移曾被拖出可达区）；y、z 仍按「识别目标书（插入前）」的目标点加偏移计算。',
+    hint: '与取书的预抓取位同理：先 MovePByJ 到插入位外侧的预插入位，避免带着书横扫刮碰书立上的其他书。每次根据「识别目标书（插入前）」的新插入位和下方 y、z 偏移重新通过 IK 搜索可达的 x，不再执行固定 x；搜索结果不超过「预插入位 X 上限」。',
     fields: [
       {
-        path: 'pre_insert_x_m',
-        label: '预插入位 X（本体坐标，负值向架内）',
+        path: 'pre_insert_x_max_m',
+        label: '预插入位 X 上限（负值，越贴近 0 越靠外）',
         unit: 'm',
-        min: -1,
-        max: 0.5,
+        min: -0.8,
+        max: -0.01,
         step: 0.01,
-        precision: 3,
+        precision: 2,
       },
       {
         path: 'pre_insert_y_offset_cm',

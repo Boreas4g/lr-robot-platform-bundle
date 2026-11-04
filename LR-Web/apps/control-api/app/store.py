@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from base64 import b64encode
 import logging
 import math
 import re
@@ -37,9 +38,11 @@ from .db import (
 from .map_files import (
     CruisePoint,
     decode_base64,
+    edit_pgm_pixels,
     parse_cruise_points_yaml,
     parse_pgm,
     parse_ros_map_yaml,
+    pgm_binary,
     pgm_preview_png,
 )
 from .friendly_errors import (
@@ -56,6 +59,7 @@ from .schemas import (
     BookUpsert,
     CompleteReturnRequest,
     CompleteTakeoutRequest,
+    CompleteTakeoutTarget,
     CreateMapAnnotationRequest,
     CruiseSyncPreview,
     CruiseSyncPreviewItem,
@@ -63,6 +67,7 @@ from .schemas import (
     ManualJogRequest,
     MapAnnotation,
     MapAnnotationResult,
+    MapEditRequest,
     MapImportRequest,
     MapOrigin,
     MapVersion,
@@ -75,6 +80,7 @@ from .schemas import (
     RobotPose,
     RobotSummary,
     SetInitialPoseRequest,
+    ShelfInternalRequest,
     StressTestTemplate,
     StressTestTemplateConfig,
     StressTestTemplateUpsert,
@@ -172,6 +178,7 @@ class InMemoryStore:
         self._return_cancels: dict[str, Event] = {}
         # Multi-round take/return orchestration: one cancellation event per live task.
         self._multi_round_cancels: dict[str, Event] = {}
+        self._shelf_internal_cancels: dict[str, Event] = {}
         # Map-switch outcomes reported by the vehicle, keyed by command id:
         # (succeeded|failed|rejected, reason). Consumed by the synchronous
         # switch endpoint so the operator gets a direct result per click.
@@ -540,6 +547,7 @@ class InMemoryStore:
                     currentTask=item.current_task,
                     mapVersion=item.map_version,
                     mapId=item.map_id,
+                    navigationControlMode=item.navigation_control_mode,
                     pose=item.pose,
                     localizationStatus=item.localization_status,
                     localizationScanMode=item.localization_scan_mode,
@@ -679,11 +687,12 @@ class InMemoryStore:
         synced to bookarm's real state: terminal states map to the matching
         dispatch outcome; a still-running (or unreadable) sub-task parks the
         task in recovery_required with a pointer to the debug page, because
-        the arm may physically still be moving or holding a book."""
+        the arm may physically still be moving or holding a book. An interrupted
+        shelf-internal flow always needs manual confirmation of the book location."""
         orphans = [
             task
             for task in self.tasks
-            if task.type in {"takeout", "return", "multi_round"}
+            if task.type in {"takeout", "return", "multi_round", "shelf_internal"}
             and task.status in {"queued", "running", "paused"}
         ]
         if not orphans:
@@ -754,7 +763,13 @@ class InMemoryStore:
                 live_detail = str(view.get("error") or "")
             except Exception:
                 live_state = None
-            if live_state == "succeeded":
+            if live_state == "succeeded" and task.type == "shelf_internal":
+                self._update_takeout_task(
+                    task.id,
+                    status="recovery_required",
+                    workflowMessage="架内流程被控制站重启中断，请确认目标书位置后再恢复",
+                )
+            elif live_state == "succeeded":
                 self._update_takeout_task(
                     task.id,
                     status="completed",
@@ -863,6 +878,7 @@ class InMemoryStore:
                     current_task=item.currentTask,
                     map_version=item.mapVersion,
                     map_id=item.mapId,
+                    navigation_control_mode=item.navigationControlMode,
                     pose=item.pose.model_dump(mode="json") if item.pose else None,
                     localization_status=item.localizationStatus,
                     localization_scan_mode=item.localizationScanMode,
@@ -1164,6 +1180,27 @@ class InMemoryStore:
             self._audit(user.username, "import_map", map_id)
             return map_version
 
+    def edit_map(self, map_id: str, request: MapEditRequest, user: User) -> MapVersion:
+        source = next((item for item in self.map_versions if item.id == map_id), None)
+        if source is None:
+            raise ValueError("地图版本不存在")
+        source_dir = self.map_storage_dir / map_id
+        try:
+            yaml_data = (source_dir / source.yamlFile).read_bytes()
+            pgm_data = (source_dir / source.pgmFile).read_bytes()
+        except OSError as error:
+            raise ValueError(f"无法读取原始地图文件：{error}") from error
+        image = parse_pgm(pgm_data)
+        edited = edit_pgm_pixels(image, [(point.x, point.y, point.value) for point in request.points])
+        import_request = MapImportRequest(
+            name=request.name or f"{source.name} 编辑",
+            yamlName=source.yamlFile,
+            yamlContent=b64encode(yaml_data).decode("ascii"),
+            pgmName=source.pgmFile,
+            pgmContent=b64encode(pgm_binary(edited)).decode("ascii"),
+        )
+        return self.import_map(import_request, user)
+
     def map_preview_path(self, map_id: str) -> Path:
         if not any(item.id == map_id for item in self.map_versions):
             raise ValueError("地图版本不存在")
@@ -1357,7 +1394,7 @@ class InMemoryStore:
     def create_complete_takeout_task(
         self, request: CompleteTakeoutRequest, user: User
     ) -> DispatchTask:
-        """Create a navigate-then-takeout task; a daemon thread orchestrates it."""
+        """Create a takeout task, optionally navigating and aligning the vehicle first."""
         if not self._can_manually_control(user):
             raise PermissionError("仅维护人员可创建会驱动机器人硬件的取书任务")
         with self._lock:
@@ -1413,9 +1450,11 @@ class InMemoryStore:
                 progress=0,
                 updatedAt=_now_iso(),
                 bookId=request.bookId,
+                workflowMode="mid_takeout" if request.takeoutMode == "mid" else "takeout",
                 workflowMessage="排队中",
                 workflowDetails={
                     "templateId": request.templateId,
+                    "takeoutMode": request.takeoutMode,
                     "destinationSlot": request.destinationSlot,
                     "target": request.target.model_dump() if request.target else None,
                     "liftHeightMm": request.liftHeightMm,
@@ -1523,6 +1562,8 @@ class InMemoryStore:
                 event = self._return_cancels.get(task.id)
             elif task.type == "multi_round":
                 event = self._multi_round_cancels.get(task.id)
+            elif task.type == "shelf_internal":
+                event = self._shelf_internal_cancels.get(task.id)
             elif task.type == "navigate" and (task.workflowDetails or {}).get("annotationNavigation") is True:
                 event = self._annotation_nav_cancels.get(task.id)
             else:
@@ -1547,21 +1588,10 @@ class InMemoryStore:
         stage_task_ids = [
             value
             for key, value in details.items()
-            if key in {"navigationTaskId", "fineTuneTaskId"} and isinstance(value, str)
+            if key in {"navigationTaskId", "fineTuneTaskId", "shelfMoveTaskId"} and isinstance(value, str)
         ]
         for stage_task_id in stage_task_ids:
-            stage_task = next((item for item in self.tasks if item.id == stage_task_id), None)
-            if stage_task is None or stage_task.status not in {"queued", "running"}:
-                continue
-            try:
-                self.create_command(
-                    robot,
-                    RobotCommandRequest(command="cancel", payload={"taskId": stage_task_id}),
-                    user,
-                    self.command_ttl_seconds,
-                )
-            except Exception:
-                continue
+            self._cancel_stage_command(stage_task_id, user)
 
     def _run_complete_takeout(
         self, task_id: str, request: CompleteTakeoutRequest, slot: int, user: User
@@ -1608,7 +1638,9 @@ class InMemoryStore:
                     target_height_mm=request.liftHeightMm,
                     destination_slot=slot,
                     lift_speed_level=request.liftSpeedLevel,
+                    enable_vehicle_alignment=request.sendNavigation,
                     book_id=request.bookId,
+                    takeout_mode=request.takeoutMode,
                 ),
             )
             self._update_takeout_task(
@@ -1870,12 +1902,7 @@ class InMemoryStore:
         return task
 
     def cancel_annotation_navigation(self, task_id: str, user: User) -> DispatchTask:
-        """Best-effort cancel of an annotation navigation flow.
-
-        Sets the orchestration's cancel event; the flow's stage waits then
-        issue a targeted vehicle cancel for the in-flight navigate or
-        fine-tune command before marking the task cancelled.
-        """
+        """Cancel a live annotation flow or a stage left active by a terminal flow."""
         with self._lock:
             task = next((item for item in self.tasks if item.id == task_id), None)
             if (
@@ -1884,18 +1911,35 @@ class InMemoryStore:
                 or task.workflowDetails.get("annotationNavigation") is not True
             ):
                 raise ValueError("标注导航任务不存在")
-            if task.status in {"completed", "failed", "cancelled", "recovery_required"}:
-                raise ValueError("已结束的标注导航不能取消")
-            event = self._annotation_nav_cancels.get(task_id)
-            if event is not None:
-                event.set()
-            updated = task.model_copy(
-                update={"workflowMessage": "已请求取消，正在停止当前阶段", "updatedAt": _now_iso()}
+            terminal = task.status in {"completed", "failed", "cancelled", "recovery_required"}
+            stage_ids = {
+                value
+                for key, value in task.workflowDetails.items()
+                if key in {"navigationTaskId", "fineTuneTaskId"} and isinstance(value, str)
+            }
+            has_active_stage = any(
+                item.id in stage_ids and item.status in {"queued", "running", "paused"}
+                for item in self.tasks
             )
-            self._replace_task(task_id, updated)
-            self._schedule_persist()
+            if terminal and not has_active_stage:
+                raise ValueError("已结束的标注导航不能取消")
+            if not terminal:
+                event = self._annotation_nav_cancels.get(task_id)
+                if event is not None:
+                    event.set()
+                updated = task.model_copy(
+                    update={"workflowMessage": "已请求取消，正在停止当前阶段", "updatedAt": _now_iso()}
+                )
+                self._replace_task(task_id, updated)
+                self._schedule_persist()
+            else:
+                updated = task
             self._audit(user.username, "cancel_annotation_navigation", task_id)
-            return updated
+        if terminal:
+            robot = next((item for item in self.robots if item.id == task.robotId), None)
+            if robot is not None:
+                self._cancel_in_flight_stage_tasks(robot, task, user)
+        return updated
 
     def _run_annotation_navigation(self, task_id: str, robot_id: str, map_id: str, annotation_id: str, user: User, skip_fine_tune: bool = False) -> None:
         """Orchestrate navigation → low-speed fine-tune for one annotation (daemon)."""
@@ -2047,7 +2091,7 @@ class InMemoryStore:
         fine-tune stage command (matched by taskId, so only that exact command
         is cancelled). Used by both operator cancels and stage timeouts."""
         stage_task = next((item for item in self.tasks if item.id == stage_task_id), None)
-        if stage_task is None or stage_task.status not in {"queued", "running"}:
+        if stage_task is None or stage_task.status not in {"queued", "running", "paused"}:
             return
         robot = next((item for item in self.robots if item.id == stage_task.robotId), None)
         if robot is None:
@@ -2063,7 +2107,26 @@ class InMemoryStore:
                 self.command_ttl_seconds,
             )
         except Exception:
-            pass
+            return
+        if stage_task.status != "queued":
+            return
+        with self._lock:
+            current = next((item for item in self.tasks if item.id == stage_task_id), None)
+            if current is None or current.status != "queued":
+                return
+            self._replace_task(
+                stage_task_id,
+                current.model_copy(
+                    update={
+                        "status": "cancelled",
+                        "workflowMessage": "已取消（未开始执行）",
+                        "updatedAt": _now_iso(),
+                    }
+                ),
+            )
+            if self.cache:
+                self.cache.release_robot_lock(current.robotId, current.id.replace("TSK-", "CMD-", 1))
+            self._schedule_persist()
 
     def _wait_for_navigation(
         self, task_id: str, nav_task_id: str, cancel: Event | None, user: User
@@ -2091,7 +2154,13 @@ class InMemoryStore:
             time.sleep(self.takeout_poll_interval_s)
 
     def _wait_for_fine_tune(
-        self, task_id: str, fine_tune_task_id: str, cancel: Event | None, user: User
+        self,
+        task_id: str,
+        fine_tune_task_id: str,
+        cancel: Event | None,
+        user: User,
+        *,
+        stage_label: str = "低速精调",
     ) -> None:
         deadline = time.monotonic() + self.takeout_nav_timeout_s
         while True:
@@ -2102,16 +2171,17 @@ class InMemoryStore:
                 (item for item in self.tasks if item.id == fine_tune_task_id), None
             )
             if fine_tune_task is None:
-                raise ValueError("精调任务记录丢失")
+                raise ValueError(f"{stage_label}任务记录丢失")
             if fine_tune_task.status == "completed":
                 return
             if fine_tune_task.status in {"failed", "paused", "cancelled"}:
                 reason = fine_tune_task.failureReason or describe_task_status(fine_tune_task.status)
-                raise ValueError(f"低速精调未成功：{reason}")
+                raise ValueError(f"{stage_label}未成功：{reason}")
             if time.monotonic() >= deadline:
                 self._cancel_stage_command(fine_tune_task_id, user)
                 raise ValueError(
-                    "低速精调超时（%ds 内未完成，已下发取消）" % int(self.takeout_nav_timeout_s)
+                    "%s超时（%ds 内未完成，已下发取消）"
+                    % (stage_label, int(self.takeout_nav_timeout_s))
                 )
             time.sleep(self.takeout_poll_interval_s)
 
@@ -2444,6 +2514,385 @@ class InMemoryStore:
             self._release_robot_arm_busy(request.robotId)
             self._return_cancels.pop(task_id, None)
 
+    def create_shelf_internal_task(
+        self, request: ShelfInternalRequest, user: User
+    ) -> DispatchTask:
+        if not self._can_manually_control(user):
+            raise PermissionError("仅维护人员可创建会驱动机器人硬件的架内取还书任务")
+        with self._lock:
+            robot = next((item for item in self.robots if item.id == request.robotId), None)
+            if robot is None:
+                raise ValueError("机器人不存在")
+            if robot.status == "busy":
+                raise ValueError("机器人忙（机械臂作业中），请等待当前作业完成")
+            if robot.status != "idle":
+                raise ValueError(f"机器人 {robot.id} 当前不在空闲状态，不能执行架内取还书任务")
+            if robot.localizationStatus != "localized" or not robot.pose:
+                raise ValueError(f"机器人 {robot.id} 尚未完成可靠定位，不能执行架内移动")
+            map_id = request.mapId or robot.mapId
+            if not map_id or robot.mapId != map_id:
+                raise ValueError("架内取还书目标必须位于机器人当前地图")
+            book = self._require_book(request.bookId)
+            reference1 = self._require_book(request.referenceBook1Id)
+            reference2 = self._require_book(request.referenceBook2Id)
+            active = next(
+                (
+                    item
+                    for item in self.tasks
+                    if item.type == "shelf_internal"
+                    and item.robotId == robot.id
+                    and item.status in {"queued", "running", "paused"}
+                ),
+                None,
+            )
+            superseded = None
+            if active is not None:
+                cancel_event = self._shelf_internal_cancels.get(active.id)
+                if cancel_event is not None:
+                    cancel_event.set()
+                self._replace_task(
+                    active.id,
+                    active.model_copy(
+                        update={
+                            "status": "cancelled",
+                            "workflowMessage": "已被新的架内取还书任务取代",
+                            "updatedAt": _now_iso(),
+                        }
+                    ),
+                )
+                superseded = active
+                self._audit(user.username, "supersede_shelf_internal_task", active.id)
+            task = DispatchTask(
+                id=f"TSK-{uuid4().hex[:12].upper()}",
+                type="shelf_internal",
+                robotId=robot.id,
+                target=book.name,
+                status="queued",
+                progress=0,
+                updatedAt=_now_iso(),
+                bookId=book.id,
+                mapId=map_id,
+                workflowMessage="排队中",
+                workflowDetails={
+                    "bookId": book.id,
+                    "referenceBook1Id": reference1.id,
+                    "referenceBook2Id": reference2.id,
+                    "shelf1Target": request.shelf1Target.model_dump(),
+                    "shelf2Target": request.shelf2Target.model_dump(),
+                    "shelf1AnnotationId": request.shelf1AnnotationId,
+                    "shelf2AnnotationId": request.shelf2AnnotationId,
+                    "bookStandSlot": request.bookStandSlot,
+                    "shelf1LiftHeightMm": request.shelf1LiftHeightMm,
+                    "shelf2LiftHeightMm": request.shelf2LiftHeightMm,
+                    "moveSpeedMps": request.moveSpeedMps,
+                    "enableVehicleAlignment": request.enableVehicleAlignment,
+                    "takeoutMode": request.takeoutMode,
+                },
+            )
+            self.tasks.insert(0, task)
+            self._shelf_internal_cancels[task.id] = Event()
+            self._schedule_persist()
+            self._audit(user.username, "create_shelf_internal_task", task.id)
+        if superseded is not None:
+            self._cancel_in_flight_stage_tasks(robot, superseded, user)
+        thread = Thread(
+            target=self._run_shelf_internal,
+            args=(task.id, request, book, reference1, reference2, user),
+            name=f"shelf-internal-{task.id}",
+            daemon=True,
+        )
+        thread.start()
+        return task
+
+    def cancel_shelf_internal(self, task_id: str, user: User) -> DispatchTask:
+        if not self._can_manually_control(user):
+            raise PermissionError("仅维护人员可取消架内取还书任务")
+        with self._lock:
+            task = next((item for item in self.tasks if item.id == task_id), None)
+            if not task or task.type != "shelf_internal":
+                raise ValueError("架内取还书任务不存在")
+            if task.status in {"completed", "failed", "cancelled", "recovery_required"}:
+                raise ValueError("已结束的架内取还书任务不能取消")
+            event = self._shelf_internal_cancels.get(task_id)
+            if event is not None:
+                event.set()
+            updated = task.model_copy(
+                update={"workflowMessage": "已请求取消，正在停止当前阶段", "updatedAt": _now_iso()}
+            )
+            self._replace_task(task_id, updated)
+            self._schedule_persist()
+            self._audit(user.username, "cancel_shelf_internal", task_id)
+            return updated
+
+    def _run_shelf_internal(
+        self,
+        task_id: str,
+        request: ShelfInternalRequest,
+        book: Book,
+        reference1: Book,
+        reference2: Book,
+        user: User,
+    ) -> None:
+        cancel = self._shelf_internal_cancels.get(task_id)
+        try:
+            client = self._bookarm_client()
+            self._run_shelf_takeout_phase(
+                task_id, request, book, request.shelf1LiftHeightMm,
+                "书架1取目标书", 5, cancel, client
+            )
+            self._run_shelf_move_phase(
+                task_id, request, request.shelf2Target, request.shelf2AnnotationId,
+                "书架2", 22, cancel, client, user
+            )
+            self._run_shelf_return_phase(
+                task_id, request, book, reference2, request.shelf2LiftHeightMm,
+                "还到书架2定位书2旁边", 38, cancel, client
+            )
+            self._run_shelf_takeout_phase(
+                task_id, request, book, request.shelf2LiftHeightMm,
+                "书架2再次取同一本目标书", 55, cancel, client
+            )
+            self._run_shelf_move_phase(
+                task_id, request, request.shelf1Target, request.shelf1AnnotationId,
+                "书架1", 72, cancel, client, user
+            )
+            self._run_shelf_return_phase(
+                task_id, request, book, reference1, request.shelf1LiftHeightMm,
+                "还到书架1定位书1旁边", 88, cancel, client
+            )
+            self._update_takeout_task(
+                task_id, status="completed", progress=100, workflowMessage="架内取还书完成"
+            )
+        except _FlowCancelled:
+            self._update_takeout_task(task_id, status="cancelled", workflowMessage="已取消")
+        except _BookarmRecoveryRequired as error:
+            self._update_takeout_task(
+                task_id,
+                status="recovery_required",
+                workflowMessage="机械臂中断待确认（可能夹着书）",
+                failureReason=str(error),
+            )
+        except Exception as error:
+            if cancel is not None and cancel.is_set():
+                self._update_takeout_task(task_id, status="cancelled", workflowMessage="已取消")
+            else:
+                self._update_takeout_task(
+                    task_id,
+                    status="failed",
+                    workflowMessage="架内取还书失败",
+                    failureReason=str(error),
+                )
+        finally:
+            self._release_robot_arm_busy(request.robotId)
+            self._shelf_internal_cancels.pop(task_id, None)
+
+    def _run_shelf_takeout_phase(
+        self,
+        task_id: str,
+        request: ShelfInternalRequest,
+        book: Book,
+        height_mm: float,
+        label: str,
+        progress: int,
+        cancel: Event | None,
+        client: Any,
+    ) -> None:
+        if cancel is not None and cancel.is_set():
+            raise _FlowCancelled()
+        self._update_takeout_task(
+            task_id, status="running", progress=progress, workflowMessage=label
+        )
+        self._set_robot_arm_busy(request.robotId)
+        try:
+            bookarm_task_id = self._create_bookarm_task_with_retry(
+                cancel,
+                lambda: client.create_takeout_task(
+                    template_id=book.templateId,
+                    target_height_mm=height_mm,
+                    destination_slot=request.bookStandSlot,
+                    lift_speed_level=request.liftSpeedLevel,
+                    enable_vehicle_alignment=request.enableVehicleAlignment,
+                    book_id=book.id,
+                    takeout_mode=request.takeoutMode,
+                ),
+            )
+            self._update_takeout_task(
+                task_id,
+                workflowDetails={
+                    **self._takeout_workflow_details(task_id),
+                    "bookarmTaskId": bookarm_task_id,
+                    "bookarmTaskKind": "takeout",
+                },
+            )
+            self._wait_for_bookarm_task(
+                task_id, client, bookarm_task_id, cancel, flow_label=label
+            )
+            if cancel is not None and cancel.is_set():
+                raise _FlowCancelled()
+        finally:
+            self._release_robot_arm_busy(request.robotId)
+
+    def _run_shelf_return_phase(
+        self,
+        task_id: str,
+        request: ShelfInternalRequest,
+        book: Book,
+        reference: Book,
+        height_mm: float,
+        label: str,
+        progress: int,
+        cancel: Event | None,
+        client: Any,
+    ) -> None:
+        if cancel is not None and cancel.is_set():
+            raise _FlowCancelled()
+        self._update_takeout_task(
+            task_id, status="running", progress=progress, workflowMessage=label
+        )
+        self._set_robot_arm_busy(request.robotId)
+        try:
+            bookarm_task_id = self._create_bookarm_task_with_retry(
+                cancel,
+                lambda: client.create_midreturn_task(
+                    template_id=reference.templateId,
+                    target_height_mm=height_mm,
+                    source_slot=request.bookStandSlot,
+                    lift_speed_level=request.liftSpeedLevel,
+                    enable_vehicle_alignment=request.enableVehicleAlignment,
+                    book_id=book.id,
+                ),
+            )
+            self._update_takeout_task(
+                task_id,
+                workflowDetails={
+                    **self._takeout_workflow_details(task_id),
+                    "bookarmTaskId": bookarm_task_id,
+                    "bookarmTaskKind": "midreturn",
+                },
+            )
+            self._wait_for_bookarm_task(
+                task_id,
+                client,
+                bookarm_task_id,
+                cancel,
+                get_task=client.get_midreturn_task,
+                cancel_task=client.cancel_midreturn_task,
+                flow_label=label,
+            )
+            if cancel is not None and cancel.is_set():
+                raise _FlowCancelled()
+        finally:
+            self._release_robot_arm_busy(request.robotId)
+
+    def _run_shelf_move_phase(
+        self,
+        task_id: str,
+        request: ShelfInternalRequest,
+        target: CompleteTakeoutTarget,
+        annotation_id: str | None,
+        shelf_label: str,
+        progress: int,
+        cancel: Event | None,
+        client: Any,
+        user: User,
+    ) -> None:
+        self._update_takeout_task(
+            task_id, progress=progress, workflowMessage=f"移至{shelf_label}前：升降杆降至最低端（10mm）"
+        )
+        last_error: Exception | None = None
+        result: dict[str, Any] | None = None
+        for _attempt in range(5):
+            if cancel is not None and cancel.is_set():
+                raise _FlowCancelled()
+            try:
+                result = client.move_lift(10.0, speed_level=request.liftSpeedLevel)
+                break
+            except Exception as error:
+                if getattr(error, "status", None) != 409:
+                    raise
+                last_error = error
+                time.sleep(max(self.takeout_poll_interval_s, 0.5))
+        if result is None:
+            raise ValueError(f"升降杆未能降至最低端，禁止架内移动：{last_error}")
+        try:
+            confirmed_target = float(result.get("target_height_mm"))
+            measured_height = float(result.get("measured_height_mm"))
+        except (TypeError, ValueError) as error:
+            raise ValueError("升降杆未返回有效高度反馈，禁止架内移动") from error
+        if (
+            confirmed_target != 10.0
+            or not math.isfinite(measured_height)
+            or abs(measured_height - confirmed_target) > 1.0
+        ):
+            raise ValueError(
+                f"升降杆未确认到达最低端（反馈 {measured_height:.1f}mm），禁止架内移动"
+            )
+        if cancel is not None and cancel.is_set():
+            raise _FlowCancelled()
+        robot = next((item for item in self.robots if item.id == request.robotId), None)
+        if robot is None:
+            raise ValueError("机器人不存在")
+        self._update_takeout_task(
+            task_id, progress=progress + 3, workflowMessage=f"架内移动至{shelf_label}（仅前后，只调X）"
+        )
+        stage_task_id = self._dispatch_shelf_move(
+            task_id, robot, request, target, annotation_id, shelf_label, user
+        )
+        self._wait_for_fine_tune(
+            task_id, stage_task_id, cancel, user, stage_label="架内移动"
+        )
+        if cancel is not None and cancel.is_set():
+            raise _FlowCancelled()
+
+    def _dispatch_shelf_move(
+        self,
+        task_id: str,
+        robot: RobotSummary,
+        request: ShelfInternalRequest,
+        target: CompleteTakeoutTarget,
+        annotation_id: str | None,
+        shelf_label: str,
+        user: User,
+    ) -> str:
+        map_id = request.mapId or robot.mapId
+        command = self.create_command(
+            robot,
+            RobotCommandRequest(
+                command="shelf_move",
+                payload={
+                    "mapId": map_id,
+                    "x": target.x,
+                    "y": target.y,
+                    "yaw": target.yaw,
+                    "speedMps": request.moveSpeedMps,
+                },
+            ),
+            user,
+            self.command_ttl_seconds,
+        )
+        stage_task = DispatchTask(
+            id=command.commandId.replace("CMD-", "TSK-", 1),
+            type="shelf_move",
+            robotId=robot.id,
+            target=f"架内移动至{shelf_label} ({target.x:.2f}, {target.y:.2f})",
+            status="queued",
+            progress=0,
+            updatedAt=_now_iso(),
+            mapId=map_id,
+            annotationId=annotation_id,
+        )
+        with self._lock:
+            self.tasks.insert(0, stage_task)
+            self._schedule_persist()
+        self._update_takeout_task(
+            task_id,
+            workflowDetails={
+                **self._takeout_workflow_details(task_id),
+                "shelfMoveTaskId": stage_task.id,
+            },
+        )
+        return stage_task.id
+
     # Multi-round orchestration: navigate once, then take books into stand
     # slots 1..N and return slots 1..M (M <= N) without moving the chassis.
 
@@ -2510,6 +2959,7 @@ class InMemoryStore:
                 workflowMessage="排队中",
                 workflowDetails={
                     "sendNavigation": request.sendNavigation,
+                    "takeoutMode": request.takeoutMode,
                     "target": request.target.model_dump() if request.target else None,
                     # 物理上须从支架内侧向外侧放置：N 本取书依次进 N..1 号槽
                     # （3 本即 3、2、1 号）；还书第 j 个目标取 j 号槽的书，
@@ -2628,6 +3078,8 @@ class InMemoryStore:
             if task.type == "return":
                 # 末尾还书（returnMode=end）的子任务在 bookarm /return/tasks 下。
                 kind = "return" if details.get("returnMode") == "end" else "midreturn"
+            elif task.type == "shelf_internal":
+                kind = str(details.get("bookarmTaskKind") or "takeout")
             else:
                 kind = "takeout"
             refs.append((single, kind))
@@ -2670,6 +3122,7 @@ class InMemoryStore:
         if not self._can_manually_control(user):
             raise PermissionError("仅维护人员可确认机械臂中断恢复")
         result = self._bookarm_client().dismiss_recovery(bookarm_task_id)
+        settled_robot_ids: set[str] = set()
         with self._lock:
             for task in list(self.tasks):
                 if task.status != "recovery_required":
@@ -2686,8 +3139,15 @@ class InMemoryStore:
                         }
                     ),
                 )
+                settled_robot_ids.add(task.robotId)
             self._schedule_persist()
             self._audit(user.username, "dismiss_bookarm_recovery", bookarm_task_id)
+        for robot_id in settled_robot_ids:
+            if not any(
+                task.robotId == robot_id and task.status in {"queued", "running", "paused"}
+                for task in self.tasks
+            ):
+                self._release_robot_arm_busy(robot_id)
         return result
 
     _VISION_IMAGE_NAME = re.compile(
@@ -2871,6 +3331,7 @@ class InMemoryStore:
                         destination_slot=slot,
                         lift_speed_level=request.liftSpeedLevel,
                         book_id=book.name,
+                        takeout_mode=request.takeoutMode,
                     ),
                 )
                 self._update_multi_round_entry(
@@ -3042,6 +3503,33 @@ class InMemoryStore:
         self._notify_robot_update(updated_robot)
         return updated_robot
 
+    def set_navigation_control_mode(self, robot_id: str, mode: str, user: User) -> RobotSummary:
+        if mode not in {"differential", "ackermann"}:
+            raise ValueError("不支持的导航控制模式")
+        with self._lock:
+            index = next((index for index, item in enumerate(self.robots) if item.id == robot_id), None)
+            if index is None:
+                raise ValueError("机器人不存在")
+            robot = self.robots[index]
+            if robot.status not in {"idle", "mapping"}:
+                raise ValueError("仅可在机器人待命或建图时切换控制模式")
+            updated = robot.model_copy(update={"navigationControlMode": mode})
+            self.robots[index] = updated
+            self._schedule_persist()
+            self._audit(user.username, "set_navigation_control_mode", f"{robot_id}:{mode}")
+        command = RobotCommand(
+            commandId=f"CMD-{uuid4().hex[:12].upper()}",
+            robotId=robot.id,
+            command="set_control_mode",
+            payload={"controlMode": mode},
+            expiresAt=datetime.now(UTC) + timedelta(seconds=self.command_ttl_seconds),
+            idempotencyKey=secrets.token_urlsafe(18),
+        )
+        if self.publisher:
+            self.publisher.publish_command(command, user)
+        self._notify_robot_update(updated)
+        return updated
+
     def send_manual_jog(self, robot_id: str, request: ManualJogRequest) -> RobotCommand:
         """免鉴权直控点动：仅校验服务端安全限值后直接经 MQTT 下发。
 
@@ -3060,7 +3548,12 @@ class InMemoryStore:
             commandId=f"CMD-{uuid4().hex[:12].upper()}",
             robotId=robot.id,
             command="manual_jog",
-            payload={"linear": request.linear, "angular": request.angular, "durationMs": request.durationMs},
+            payload={
+                "linear": request.linear,
+                "angular": request.angular,
+                "durationMs": request.durationMs,
+                "controlMode": robot.navigationControlMode,
+            },
             expiresAt=datetime.now(UTC) + timedelta(milliseconds=request.durationMs + 250),
             idempotencyKey=secrets.token_urlsafe(18),
         )
@@ -3377,11 +3870,14 @@ class InMemoryStore:
                 expires = expires.replace(tzinfo=UTC)
             if expires <= datetime.now(UTC):
                 raise ValueError("命令已过期")
+            payload = dict(request.payload)
+            if request.command in {"navigate", "cruise", "fine_tune", "shelf_move", "manual_jog"}:
+                payload["controlMode"] = robot.navigationControlMode
             command = RobotCommand(
                 commandId=f"CMD-{uuid4().hex[:12].upper()}",
                 robotId=robot.id,
                 command=request.command,
-                payload=request.payload,
+                payload=payload,
                 expiresAt=expires,
                 idempotencyKey=key,
             )
@@ -3390,6 +3886,7 @@ class InMemoryStore:
                 "manual_jog",
                 "stop_manual_control",
                 "emergency_stop",
+                "cancel",
                 "stop",
             }
             lock_seconds = self.control_lock_seconds
@@ -3531,6 +4028,7 @@ class InMemoryStore:
                     self._takeout_cancels.get(task.id)
                     or self._return_cancels.get(task.id)
                     or self._multi_round_cancels.get(task.id)
+                    or self._shelf_internal_cancels.get(task.id)
                 )
                 if cancel_event is not None:
                     cancel_event.set()
@@ -3621,6 +4119,7 @@ class InMemoryStore:
                 "cruise_succeeded",
                 "cruise_failed",
                 "cruise_cancelled",
+                "shelf_move_cancelled",
                 "lift_move_completed",
                 "lift_move_driver_acknowledged",
                 "map_switched",
@@ -3806,6 +4305,7 @@ class InMemoryStore:
                 "navigation_dispatching",
                 "navigation_started",
                 "cruise_dispatching",
+                "shelf_move_dispatching",
             } and task:
                 self.tasks[task_index] = task.model_copy(update={"status": "running", "updatedAt": updated_at})
                 if robot.status != "busy":
@@ -3826,13 +4326,15 @@ class InMemoryStore:
                 event_name == "command_completed"
                 and task
                 and command
-                and command.command == "fine_tune"
+                and command.command in {"fine_tune", "shelf_move"}
             ):
-                # fine_tune reports through the generic command events instead
-                # of the navigation lifecycle, so its dispatch row ends here.
                 self.tasks[task_index] = task.model_copy(
                     update={"status": "completed", "progress": 100, "updatedAt": updated_at}
                 )
+                if command.command == "shelf_move" and robot.status != "busy":
+                    self.robots[robot_index] = robot.model_copy(
+                        update={"status": "idle", "location": task.target, "currentTask": "待命", "updatedAt": updated_at}
+                    )
             elif event_name in {"command_rejected", "navigation_failed", "cruise_failed"} and task:
                 failure_update: dict[str, object] = {"status": "failed", "updatedAt": updated_at}
                 # Keep the vehicle's rejection/failure reason for every command
@@ -3846,7 +4348,7 @@ class InMemoryStore:
                     self.robots[robot_index] = robot.model_copy(
                         update={"status": "idle", "currentTask": "导航任务失败，等待调度处理", "updatedAt": updated_at}
                     )
-            elif event_name in {"navigation_cancelled", "cruise_cancelled"} and task:
+            elif event_name in {"navigation_cancelled", "cruise_cancelled", "shelf_move_cancelled"} and task:
                 # Cancelled is a terminal state: the vehicle will not resume
                 # this command, so the dispatch row must not linger in paused.
                 self.tasks[task_index] = task.model_copy(update={"status": "cancelled", "updatedAt": updated_at})
@@ -3960,6 +4462,7 @@ class InMemoryStore:
                     current_task=robot.currentTask,
                     map_version=robot.mapVersion,
                     map_id=robot.mapId,
+                    navigation_control_mode=robot.navigationControlMode,
                     pose=robot.pose.model_dump(mode="json") if robot.pose else None,
                     localization_status=robot.localizationStatus,
                     localization_scan_mode=robot.localizationScanMode,

@@ -34,7 +34,6 @@
 | `cruise-points.yaml` | 巡航点位 |
 | `client-ca.crt` / `mqtt-certs/` / `web-certs/` | mTLS CA、MQTT 服务端与 Web 证书私钥 |
 | `emqx-users.csv` | EMQX 账号 |
-| `bookarm-start-policy.conf` | BookArm 启动策略 |
 
 ## 其他已排除的敏感/密钥材料
 

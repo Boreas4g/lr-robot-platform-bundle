@@ -743,7 +743,8 @@ def apply_profile(p, profile_path, *, install_deps, start):
             install(f"/var/lib/lr-robot/maps/{map_id}/{name}", (baseline / f"maps/{map_id}/{name}").read_bytes(), mode=0o644)
         definition["yamlPath"] = f"/var/lib/lr-robot/maps/{map_id}/map.yaml"
     install("/etc/lr-robot/map-registry.yaml", yaml_module().safe_dump(registry))
-    for path in ("/var/lib/lr-platform/battery", "/var/lib/lr-platform/maps", "/var/lib/lr-platform/host-start-agent",
+    for path in ("/var/lib/lr-platform/battery", "/var/lib/lr-platform/maps", "/var/lib/lr-platform/multi-round-vision",
+                 "/var/lib/lr-platform/host-start-agent",
                  "/var/lib/lr-bookarm/spine_studio", "/var/lib/lr-bookarm/runtime", "/var/lib/lr-bookarm/models",
                  "/var/lib/lr-robot", str(ARM / "recordings")):
         Path(path).mkdir(parents=True, exist_ok=True)
@@ -783,7 +784,6 @@ def apply_profile(p, profile_path, *, install_deps, start):
                 data = data.replace(b"1000000", str(p["arm"].get("can_bitrate", 1000000)).encode())
             install(Path("/usr/local/libexec") / file.name, data, mode=0o755, owner=False)
     install("/etc/lr-platform/bluetooth.env", env_text({"LR_BLUETOOTH_NAME": p["bluetooth_name"]}))
-    install("/etc/lr-platform/bookarm-start-policy.conf", "true\n" if p["hardware_autostart"] else "false\n", mode=0o660)
     sudoers = f"{p['service_user']} ALL=(root) NOPASSWD: /usr/bin/systemctl start lr-robot-runtime.service, /usr/bin/systemctl stop lr-robot-runtime.service, /usr/bin/systemctl restart lr-robot-runtime.service, /usr/bin/systemctl start lr-robot-mapping.service, /usr/bin/systemctl stop lr-robot-mapping.service, /usr/bin/systemctl start lr-bookarm-can.service, /usr/bin/systemctl start lr-bookarm-takeout.service, /usr/bin/systemctl start lr-xt369-usb.service, /usr/bin/systemctl start lr-robot-mapping-agent.service, /usr/bin/systemctl start lr-platform.service, /usr/bin/bash {ROS}/scripts/register-robot-map.sh *, {ROS}/scripts/register-robot-map.sh *\n"
     staged = backup / "sudoers-check"
     write_private(staged, sudoers, 0o440)

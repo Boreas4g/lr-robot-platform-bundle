@@ -23,6 +23,7 @@ import type {
   RobotCommand,
   RobotSummary,
   SaveMappingResult,
+  TakeoutMode,
 } from './types';
 
 export async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -175,14 +176,14 @@ export async function pollTasks(): Promise<DispatchTask[]> {
   return getTasks({ status: ACTIVE_TASK_STATUSES, limit: TASK_POLL_RECENT_LIMIT });
 }
 
-/** Navigate to a shelf target (unless sendNavigation is false), then run
- * the on-robot takeout workflow. */
+/** Optionally navigate and align the vehicle before the on-robot takeout workflow. */
 export async function createCompleteTakeout(values: {
   robotId: string;
   templateId: string;
   target?: { x: number; y: number; yaw: number };
   liftHeightMm: number;
   destinationSlot: number;
+  takeoutMode?: 'standard' | 'mid';
   liftSpeedLevel?: number;
   bookId?: string;
   mapId?: string;
@@ -231,6 +232,36 @@ export async function createCompleteReturn(values: {
 
 export async function cancelCompleteReturn(taskId: string): Promise<DispatchTask> {
   return apiRequest(`/api/v1/circulation/complete-return/${taskId}/cancel`, {
+    method: 'POST',
+  });
+}
+
+export async function createShelfInternal(values: {
+  robotId: string;
+  bookId: string;
+  referenceBook1Id: string;
+  referenceBook2Id: string;
+  shelf1Target: { x: number; y: number; yaw: number };
+  shelf2Target: { x: number; y: number; yaw: number };
+  shelf1LiftHeightMm: number;
+  shelf2LiftHeightMm: number;
+  moveSpeedMps?: number;
+  enableVehicleAlignment?: boolean;
+  bookStandSlot: number;
+  takeoutMode?: TakeoutMode;
+  liftSpeedLevel?: number;
+  mapId?: string;
+  shelf1AnnotationId?: string;
+  shelf2AnnotationId?: string;
+}): Promise<DispatchTask> {
+  return apiRequest('/api/v1/circulation/shelf-internal', {
+    method: 'POST',
+    body: JSON.stringify(values),
+  });
+}
+
+export async function cancelShelfInternal(taskId: string): Promise<DispatchTask> {
+  return apiRequest(`/api/v1/circulation/shelf-internal/${taskId}/cancel`, {
     method: 'POST',
   });
 }
@@ -303,6 +334,7 @@ export async function createMultiRound(values: {
   target?: { x: number; y: number; yaw: number };
   takeBookIds: string[];
   returnBookIds?: string[];
+  takeoutMode?: 'standard' | 'mid';
   liftSpeedLevel?: number;
   mapId?: string;
   annotationId?: string;
@@ -370,6 +402,19 @@ export async function importMap(values: {
       pgmName: values.pgmFile.name,
       pgmContent,
     }),
+  });
+}
+
+export async function editLibraryMap(
+  mapId: string,
+  values: {
+    name?: string;
+    points: { x: number; y: number; value: 0 | 100 }[];
+  },
+): Promise<ImportMapResult> {
+  return apiRequest(`/api/v1/library/maps/${mapId}/edit`, {
+    method: 'POST',
+    body: JSON.stringify(values),
   });
 }
 
@@ -502,6 +547,16 @@ export async function createRobot(values: { id: string; name: string; gatewayHos
 
 export async function deleteRobot(robotId: string): Promise<void> {
   await apiRequest<void>(`/api/v1/robots/${robotId}`, { method: 'DELETE' });
+}
+
+export async function setNavigationControlMode(
+  robotId: string,
+  controlMode: 'differential' | 'ackermann',
+): Promise<RobotSummary> {
+  return apiRequest(`/api/v1/robots/${robotId}/control-mode`, {
+    method: 'PUT',
+    body: JSON.stringify({ controlMode }),
+  });
 }
 
 /** Ack of a submitted robot command; `detail` carries the operator-facing
@@ -652,25 +707,5 @@ export async function restartAllServices(): Promise<StartAllResult> {
   return apiRequest('/api/v1/system/restart-all', {
     method: 'POST',
     body: JSON.stringify({}),
-  });
-}
-
-/** Whether one-click startup may bring up arm CAN/service right now. */
-export type BookarmStartPolicy = {
-  allow: boolean;
-};
-
-/** Read the operator-confirmed arm hardware start policy. */
-export async function getBookarmStartPolicy(): Promise<BookarmStartPolicy> {
-  return apiRequest('/api/v1/system/bookarm-start-policy');
-}
-
-/** Confirm or revoke arm hardware start-up after on-site inspection. */
-export async function setBookarmStartPolicy(
-  allow: boolean,
-): Promise<BookarmStartPolicy> {
-  return apiRequest('/api/v1/system/bookarm-start-policy', {
-    method: 'PUT',
-    body: JSON.stringify({ allow }),
   });
 }

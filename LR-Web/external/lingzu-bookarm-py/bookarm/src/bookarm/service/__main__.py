@@ -227,6 +227,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         persisted_mid_return = DEFAULT_TUNING_DIR / "midreturn_profile.json"
         if persisted_mid_return.is_file():
             mid_return_profile = persisted_mid_return
+    mid_takeout_profile = DEFAULT_TUNING_DIR / "midtakeout_profile.json"
+    if not mid_takeout_profile.is_file():
+        mid_takeout_profile = None
+    mid_takeout_slots = DEFAULT_TUNING_DIR / "midtakeout_book_stand_slots.json"
+    if not mid_takeout_slots.is_file():
+        mid_takeout_slots = (
+            BOOKARM_ROOT / "config" / "calibration" / "midtakeout_book_stand_slots.json"
+        )
     camera_calibration = args.camera_calibration
     if camera_calibration is None:
         camera_calibration = (
@@ -273,6 +281,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 mid_return_profile_path=(
                     resolve_path(mid_return_profile) if mid_return_profile is not None else None
                 ),
+                mid_takeout_profile_path=(
+                    resolve_path(mid_takeout_profile)
+                    if mid_takeout_profile is not None
+                    else None
+                ),
+                mid_takeout_book_stand_slots_path=resolve_path(mid_takeout_slots),
                 task_manager=task_manager,
                 arm_feedback_max_age_s=args.arm_feedback_max_age_s,
                 camera_debug_capture_dir=resolve_path(args.studio_dir) / "vision_debug",
@@ -332,6 +346,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             busy_lock=runner.busy_lock,
             book_stand_slots_path=resolve_path(args.slots_path),
             book_stand_pickup_slots_path=resolve_path(args.pickup_slots_path),
+            mid_takeout_book_stand_slots_path=resolve_path(mid_takeout_slots),
             preempt=runner.cancel_active,
         )
         safety = SafetyController(runner, arm=combined.arm, lift=combined.lift)

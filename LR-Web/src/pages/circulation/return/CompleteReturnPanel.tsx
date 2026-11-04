@@ -1,4 +1,4 @@
-import { RocketOutlined } from '@ant-design/icons';
+import { RocketOutlined, SaveOutlined } from '@ant-design/icons';
 import {
   Alert,
   App,
@@ -38,6 +38,10 @@ import AnnotationTargetSelect from '../components/AnnotationTargetSelect';
 import MapPosePreview from '../components/MapPosePreview';
 import { mapBoundsText, targetWithinMap } from '../components/mapBounds';
 import VisionImage from '../components/VisionImage';
+import {
+  loadReturnOptions,
+  saveReturnOptions,
+} from '../components/workflowOptions';
 
 const TERMINAL_STATES = [
   'completed',
@@ -52,20 +56,39 @@ const BOOK_STAND_SLOTS = [1, 2, 3, 4, 5];
 /** Navigate-to-shelf then return orchestration, driven by the control station. */
 export default function CompleteReturnPanel() {
   const { message } = App.useApp();
+  const [savedOptions] = useState(loadReturnOptions);
   const [books, setBooks] = useState<Book[]>([]);
   const [annotations, setAnnotations] = useState<MapAnnotation[]>([]);
   const [maps, setMaps] = useState<MapVersion[]>([]);
   const [robot, setRobot] = useState<RobotSummary>();
   const [mapId, setMapId] = useState<string>();
-  const [robotId, setRobotId] = useState<string>('LR-01');
-  const [bookId, setBookId] = useState<string>();
-  const [annotationId, setAnnotationId] = useState<string>();
-  const [manualMode, setManualMode] = useState(false);
-  const [manualTarget, setManualTarget] = useState({ x: 0, y: 0, yaw: 0 });
-  const [liftHeightMm, setLiftHeightMm] = useState(DEFAULT_BOOK_HEIGHT_MM);
-  const [sourceSlot, setSourceSlot] = useState<number>();
-  const [sendNavigation, setSendNavigation] = useState(true);
-  const [returnMode, setReturnMode] = useState<ReturnMode>('mid');
+  const [robotId, setRobotId] = useState<string>(
+    savedOptions?.robotId ?? 'LR-01',
+  );
+  const [bookId, setBookId] = useState<string | undefined>(
+    savedOptions?.bookId,
+  );
+  const [annotationId, setAnnotationId] = useState<string | undefined>(
+    savedOptions?.annotationId,
+  );
+  const [manualMode, setManualMode] = useState(
+    savedOptions?.manualMode ?? false,
+  );
+  const [manualTarget, setManualTarget] = useState(
+    savedOptions?.manualTarget ?? { x: 0, y: 0, yaw: 0 },
+  );
+  const [liftHeightMm, setLiftHeightMm] = useState(
+    savedOptions?.liftHeightMm ?? DEFAULT_BOOK_HEIGHT_MM,
+  );
+  const [sourceSlot, setSourceSlot] = useState<number | undefined>(
+    savedOptions?.sourceSlot,
+  );
+  const [sendNavigation, setSendNavigation] = useState(
+    savedOptions?.sendNavigation ?? true,
+  );
+  const [returnMode, setReturnMode] = useState<ReturnMode>(
+    savedOptions?.returnMode ?? 'mid',
+  );
   const [activeTaskId, setActiveTaskId] = useState<string>();
   const [activeTask, setActiveTask] = useState<DispatchTask>();
   const [submitting, setSubmitting] = useState(false);
@@ -268,6 +291,25 @@ export default function CompleteReturnPanel() {
     }
   }
 
+  function saveOptions() {
+    const saved = saveReturnOptions({
+      robotId,
+      bookId,
+      annotationId,
+      manualMode,
+      manualTarget,
+      liftHeightMm,
+      sourceSlot,
+      returnMode,
+      sendNavigation,
+    });
+    if (saved) {
+      message.success('还书选项参数已保存，下次打开本页将自动恢复。');
+    } else {
+      message.error('浏览器存储不可用，还书选项参数保存失败。');
+    }
+  }
+
   return (
     <Card
       className="robot-workflow-card"
@@ -302,7 +344,12 @@ export default function CompleteReturnPanel() {
         >
           发送导航（勾选后先导航到目标点并低速精调；不勾选则底盘不动，原地直接开始升降还书）
         </Checkbox>
-        <Space className="robot-workflow-fields" wrap size={[12, 8]} style={{ width: '100%' }}>
+        <Space
+          className="robot-workflow-fields"
+          wrap
+          size={[12, 8]}
+          style={{ width: '100%' }}
+        >
           <Select
             style={{ minWidth: 260 }}
             placeholder={
@@ -430,6 +477,9 @@ export default function CompleteReturnPanel() {
           />
         ) : null}
         <Space wrap>
+          <Button icon={<SaveOutlined />} onClick={saveOptions}>
+            保存选项参数
+          </Button>
           <Popconfirm
             title="开始完整还书？"
             description={

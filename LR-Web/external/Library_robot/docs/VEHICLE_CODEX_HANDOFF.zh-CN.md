@@ -388,7 +388,7 @@ sudo journalctl -u lr-robot-runtime.service -n 250 --no-pager
 | 平台显示离线 | `lr-robot-runtime.service` 日志、DNS、端口、Gateway 参数路径 | 暴露 ROS/MQTT 端口。 |
 | 已连接但无位置 | `/amcl_pose`、地图 ID、定位状态、轮速和编码器 | 手推机器人验证里程计或伪造坐标。 |
 | 导航被拒绝 | 地图 ID、边界、定位、操作模式和 Gateway 安全状态 | 放宽边界或绕过 Gateway。 |
-| 点动已接受但底盘不动 | 先运行 `scripts/diagnose-motion-chain.sh`，核对 `/cmd_vel_nav -> /cmd_vel_smoothed -> /cmd_vel` 的发布/订阅、`velocity_smoother` 与 `collision_monitor` 生命周期、实体急停和底盘驱动日志 | 将 Gateway 改为直发 `/cmd_vel` 或停用碰撞保护。 |
+| 点动已接受但底盘不动 | 先运行 `scripts/diagnose-motion-chain.sh`，核对 `/cmd_vel_nav -> /cmd_vel_limited -> /cmd_vel_smoothed -> /cmd_vel` 的发布/订阅、`curvature_limiter` 节点、`velocity_smoother` 与 `collision_monitor` 生命周期、实体急停和底盘驱动日志 | 将 Gateway 改为直发 `/cmd_vel` 或停用碰撞保护。 |
 | 机械臂不可用 | `lr-bookarm-runtime.service`、本机 `127.0.0.1:18080`、CAN/设备路径 | 让 BookArm API 监听 `0.0.0.0`。 |
 
 ### 点动速度链只读诊断
@@ -402,17 +402,19 @@ cd "$ROBOT_WORKSPACE"
 ```
 
 该脚本只读取节点、生命周期和话题发布/订阅关系，不会发布 ROS 消息。预期
-`velocity_smoother`、`collision_monitor` 处于 `active`，且三段速度话题分别有正确的
-上下游端点。若现场负责人已单独授权一次低速、短促点动，可在操作者执行该点动的同时运行：
+`curvature_limiter` 节点存在，`velocity_smoother`、`collision_monitor` 处于 `active`，且四段
+速度话题分别有正确的上下游端点。若现场负责人已单独授权一次低速、短促点动，可在操作者执行该点动的同时运行：
 
 ```bash
 ./scripts/diagnose-motion-chain.sh --watch
 ```
 
-脚本仍只观察消息。判读规则：`/cmd_vel_nav` 有非零速度而 `/cmd_vel_smoothed` 无输出，检查
-`velocity_smoother`；前两段有输出而 `/cmd_vel` 为零，检查 `collision_monitor`、雷达、TF 和
-碰撞状态；`/cmd_vel` 有非零速度但轮速不变，立即停止测试并由现场维护人员检查实体急停、
-底盘驱动使能、电机供电和驱动日志。不得为排障绕过碰撞保护。
+脚本仍只观察消息。判读规则：`/cmd_vel_nav` 有非零速度而 `/cmd_vel_limited` 无输出，检查
+`curvature_limiter` 与 `/navigation/control_mode`；`/cmd_vel_limited` 有非零速度而
+`/cmd_vel_smoothed` 无输出，检查 `velocity_smoother`；`/cmd_vel_smoothed` 有非零速度而
+`/cmd_vel` 为零，检查 `collision_monitor`、雷达、TF 和碰撞状态；`/cmd_vel` 有非零速度但轮速
+不变，立即停止测试并由现场维护人员检查实体急停、底盘驱动使能、电机供电和驱动日志。不得为
+排障绕过碰撞保护。
 
 ## 9. 相关文件
 

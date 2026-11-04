@@ -51,6 +51,11 @@ class MidReturnStage(str, Enum):
     SHELF_INSERT = "shelf_insert"
 
 
+class TakeoutMode(str, Enum):
+    STANDARD = "standard"
+    MID = "mid"
+
+
 @dataclass(frozen=True)
 class TakeBookRequest:
     book: BookIdentity
@@ -58,7 +63,9 @@ class TakeBookRequest:
     spine_template: SpineTemplate
     destination_slot: BookStandSlot
     lift_speed_level: int = 1
+    enable_vehicle_alignment: bool = True
     stop_after_stage: TakeBookStage = TakeBookStage.ARM_STANDBY
+    takeout_mode: TakeoutMode = TakeoutMode.STANDARD
 
 
 @dataclass(frozen=True)
@@ -80,6 +87,7 @@ class MidReturnBookRequest:
     left_neighbor_spine_template: SpineTemplate
     source_slot: BookStandSlot
     lift_speed_level: int = 1
+    enable_vehicle_alignment: bool = True
     stop_after_stage: MidReturnStage = MidReturnStage.SHELF_INSERT
     # Stress-test shortcut: when set (6 values: x/y/z in metres, rx/ry/rz in
     # radians), skip the neighbor grasp+put-back and the fresh re-target; pick

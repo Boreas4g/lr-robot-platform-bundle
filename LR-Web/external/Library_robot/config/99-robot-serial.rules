@@ -1,17 +1,21 @@
 # Robot serial port aliases.
 #
 # ttyACM devices have unique USB serial numbers, so bind them by serial.
-# The CH340 IMU does not expose a serial number, so bind it by physical USB
-# path. Keep that device plugged into the same USB hub port.
+# The CH340 IMU has no unique serial number. Its USB device revision differs
+# from the lift adapter (8233 versus 0264), so distinguish the two adapters
+# without depending on the USB socket or ttyUSB enumeration order.
+# This revision is a model fingerprint, not a unique serial: recheck the
+# mapping before adding another CH340 adapter with the same revision.
 #
-# Mapping updated 2026-10-21 for the replacement hardware. The front/rear
-# assignment was confirmed by unplugging the front lidar (ttyACM1 disappeared).
-#   laser_port (front) : 55d4 serial 5C98184123, hub port 2.3
-#   laser_back (rear)  : 55d4 serial 5C98184650, hub port 2.1
-#   chassis            : 55d3 serial 5B90176754, hub port 2.4
-#   imu_port           : 7523 CH340, hub port 2.2
+# Mapping checked 2026-10-29 after USB port changes. Rear identity is unchanged;
+# the other connected N10_P adapter is assigned to the front lidar.
+#   laser_port (front) : 55d4 serial 5B21240926, valid N10_P packets
+#   laser_back (rear)  : 55d4 serial 5C98184650, live /scan_b
+#   chassis            : 55d3 serial 5B90176754
+#   imu_port           : 7523 revision 8233, valid WIT 0x51/0x52/0x53 frames
+# Lift binding is installed separately from config/99-lr-lift-port.rules.
 
-SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", ATTRS{serial}=="5C98184123", MODE="0666", SYMLINK+="laser_port"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", ATTRS{serial}=="5B21240926", MODE="0666", SYMLINK+="laser_port"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", ATTRS{serial}=="5C98184650", MODE="0666", SYMLINK+="laser_back"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ATTRS{serial}=="5B90176754", MODE="0666", SYMLINK+="chassis_serial_port"
-SUBSYSTEM=="tty", ENV{ID_PATH}=="pci-0000:00:14.0-usb-0:2.2:1.0", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE="0666", SYMLINK+="imu_port"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", ATTRS{bcdDevice}=="8233", MODE="0666", SYMLINK+="imu_port"

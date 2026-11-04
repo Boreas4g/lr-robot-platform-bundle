@@ -157,13 +157,19 @@ def _slots():
     return {1: plan, 2: plan, 3: plan, 4: plan}
 
 
-def _request(slot=BookStandSlot.SLOT_1, speed_level=1, stop_after=TakeBookStage.ARM_STANDBY):
+def _request(
+    slot=BookStandSlot.SLOT_1,
+    speed_level=1,
+    stop_after=TakeBookStage.ARM_STANDBY,
+    enable_vehicle_alignment=True,
+):
     return TakeBookRequest(
         book=BookIdentity("book-42"),
         target_height_mm=123.0,
         spine_template=SpineTemplate(Path("book.png")),
         destination_slot=slot,
         lift_speed_level=speed_level,
+        enable_vehicle_alignment=enable_vehicle_alignment,
         stop_after_stage=stop_after,
     )
 
@@ -227,6 +233,26 @@ class TakeBookWorkflowTests(unittest.TestCase):
         self.assertTrue(task.result.payload["arm_moved_to_zero"])
         self.assertTrue(task.result.payload["arm_moved_to_debug_pose"])
         self.assertEqual(sdk.wait(task.id).state, TaskState.SUCCEEDED)
+
+    def test_vehicle_alignment_can_be_skipped_while_post_vision_checks_continue(self):
+        sdk, _arm, _reservation = _sdk()
+        vehicle = Mock()
+        sdk._take_book.vehicle_align = vehicle
+
+        task = sdk.take_book(
+            _request(
+                stop_after=TakeBookStage.POST_VISION_ALIGN,
+                enable_vehicle_alignment=False,
+            )
+        )
+
+        self.assertEqual(task.state, TaskState.SUCCEEDED)
+        vehicle.move_distance.assert_not_called()
+        post_vision_stage = next(
+            stage for stage in task.result.stages if stage.name == "post_vision_align"
+        )
+        self.assertEqual(post_vision_stage.details["align_skipped"], "disabled_by_request")
+        self.assertIn("spine_tilt_deg", post_vision_stage.details)
 
     def test_debug_pose_stage_skips_motion_when_enabled_arm_is_already_at_debug_pose(self):
         debug_joint = TakeBookMotionPlan().debug_joint
@@ -571,13 +597,16 @@ class TakeBookReachabilityTests(unittest.TestCase):
         self.assertEqual(
             [call[1] for call in checks],
             [
+                "arm_post_grasp_x_search",
                 "arm_pregrasp", "arm_approach", "arm_fine_grasp", "arm_post_grasp",
                 "stand_pre_place", "stand_place", "stand_lower_place",
             ],
         )
-        # The chain starts at the debug joint pose; each solved pose seeds the next.
+        # The x search and first chain pose start at the debug joint pose;
+        # each solved chain pose then seeds the next.
         self.assertEqual(checks[0][3], plan.debug_joint)
-        for call in checks[1:]:
+        self.assertEqual(checks[1][3], plan.debug_joint)
+        for call in checks[2:]:
             self.assertEqual(call[3], arm.check_solution)
         # Probing never moved the arm: every check ran before the first grasp action.
         first_grasp_action = next(
@@ -600,7 +629,7 @@ class TakeBookReachabilityTests(unittest.TestCase):
         # The chain stops at the failed pose; the arm was only parked at debug.
         self.assertEqual(
             [call[1] for call in self._checks(arm)],
-            ["arm_pregrasp", "arm_approach", "arm_fine_grasp"],
+            ["arm_post_grasp_x_search", "arm_pregrasp", "arm_approach", "arm_fine_grasp"],
         )
         self.assertEqual(self._grasp_motions(arm), [])
         self.assertNotIn("close_gripper", arm.calls)
@@ -620,6 +649,7 @@ class TakeBookReachabilityTests(unittest.TestCase):
         self.assertEqual(
             [call[1] for call in self._checks(arm)],
             [
+                "arm_post_grasp_x_search",
                 "arm_pregrasp", "arm_approach", "arm_fine_grasp", "arm_post_grasp",
                 "stand_pre_place", "stand_place",
             ],
@@ -634,8 +664,14 @@ class TakeBookReachabilityTests(unittest.TestCase):
 
         self.assertEqual(task.state, TaskState.SUCCEEDED)
         checks = [call[1] for call in self._checks(arm)]
-        self.assertEqual(checks, ["arm_pregrasp", "arm_approach", "arm_fine_grasp", "arm_post_grasp"])
-        self.assertEqual(task.result.payload["reachability_checked_poses"], checks)
+        self.assertEqual(
+            checks,
+            [
+                "arm_post_grasp_x_search",
+                "arm_pregrasp", "arm_approach", "arm_fine_grasp", "arm_post_grasp",
+            ],
+        )
+        self.assertEqual(task.result.payload["reachability_checked_poses"], checks[1:])
 
     def test_stopping_at_debug_pose_skips_the_reachability_check(self):
         arm = FakeArm(enabled=True)

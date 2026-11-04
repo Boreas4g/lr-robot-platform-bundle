@@ -240,10 +240,11 @@ export const takeSteps: TuningStepDef[] = [
   },
   {
     title: '抓取后撤',
+    hint: '后撤 X 不再固定执行：以本轮精抓位叠加 X 偏移作为搜索上限，结合下方 Y/Z 与姿态偏移，每次通过 IK 搜索可达的最大 X。Y/Z 和姿态仍按设定偏移计算。',
     fields: [
       {
         path: 'post_grasp_offset_cm',
-        label: '后撤偏移',
+        label: '后撤偏移（X 为搜索上限偏移）',
         unit: 'cm',
         components: XYZ,
         step: 0.5,

@@ -249,6 +249,35 @@ def test_parse_fine_tune_command_defaults_yaw_and_map_to_active() -> None:
     assert target.yaw == 0.0
 
 
+def test_parse_shelf_move_command_uses_the_same_validated_map_target() -> None:
+    expires_at = datetime.now(UTC) + timedelta(minutes=1)
+    command = parse_gateway_command(
+        (
+            '{"commandId":"CMD-SHELF-001","robotId":"LR-01","command":"shelf_move",'
+            '"payload":{"x":1.2,"y":-0.8,"yaw":0.0,"speedMps":0.08},"expiresAt":"'
+            + expires_at.isoformat()
+            + '","safetyLevel":"high"}'
+        ).encode(),
+        "LR-01",
+    )
+
+    assert command.command == "shelf_move"
+    target = parse_fine_tune(command.payload, min_x=-2.0, max_x=2.0, min_y=-2.0, max_y=2.0, max_abs_yaw=6.284)
+    assert (target.x, target.y, target.yaw) == (1.2, -0.8, 0.0)
+    assert target.speed_mps == pytest.approx(0.08)
+
+
+def test_parse_shelf_move_speed_allows_zero_to_half_metre_per_second() -> None:
+    bounds = {"min_x": -2.0, "max_x": 2.0, "min_y": -2.0, "max_y": 2.0, "max_abs_yaw": 6.284}
+    for speed in (0.0, 0.5):
+        target = parse_fine_tune({"x": 0.0, "y": 0.0, "speedMps": speed}, **bounds)
+        assert target.speed_mps == speed
+    with pytest.raises(ValueError, match="0~0.50"):
+        parse_fine_tune({"x": 0.0, "y": 0.0, "speedMps": -0.01}, **bounds)
+    with pytest.raises(ValueError, match="0~0.50"):
+        parse_fine_tune({"x": 0.0, "y": 0.0, "speedMps": 0.51}, **bounds)
+
+
 def test_parse_fine_tune_accepts_explicit_yaw_and_map_id() -> None:
     target = parse_fine_tune(
         {"mapId": "MAP-01", "x": 0.5, "y": -0.5, "yaw": 1.57},

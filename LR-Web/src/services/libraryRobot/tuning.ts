@@ -3,14 +3,14 @@
 import { authenticatedFetch } from '../auth';
 const TUNING_API_BASE = '/bookarm-api/v1/tuning';
 
-/** Tuning flow discriminator: take-book / return-book / mid-return motion plan. */
-export type TuningKind = 'take' | 'return' | 'midreturn';
+/** Tuning flow discriminator: take-book / return-book / mid-return / mid-takeout motion plan. */
+export type TuningKind = 'take' | 'return' | 'midreturn' | 'midtakeout';
 
-/** Unified motion-speed preset of a motion plan. One level scales the arm
- * motion durations, the rod speed word and the gripper open/close speeds
- * (plus the speed-coupled gripper timing) together; `standard` is the
- * calibrated default and matches the legacy behaviour exactly. */
-export type SpeedLevel = 'slow' | 'standard' | 'fast';
+/** Unified motion-speed preset of a motion plan. One level scales arm motion
+ * durations (except the post-grasp withdrawal), the rod speed word and the
+ * gripper open/close speeds (except contact-hold duration); the post-grasp
+ * withdrawal and contact hold always keep their tuned durations for a secure grip. */
+export type SpeedLevel = 'slow' | 'standard' | 'fast' | 'ultra';
 
 export const DEFAULT_SPEED_LEVEL: SpeedLevel = 'standard';
 
@@ -19,12 +19,15 @@ export const SPEED_LEVEL_OPTIONS: { value: SpeedLevel; label: string }[] = [
   { value: 'slow', label: '慢速（精细/首次执行）' },
   { value: 'standard', label: '标准（当前标定值）' },
   { value: 'fast', label: '快速（消除停顿间隔）' },
+  { value: 'ultra', label: '极速（更高速度/谨慎验证）' },
 ];
 
 /** Reads the level out of a profile; anything unexpected means standard. */
 export function normalizeSpeedLevel(profile: TuningProfile): SpeedLevel {
   const raw = profile.speed_level;
-  return raw === 'slow' || raw === 'fast' ? raw : DEFAULT_SPEED_LEVEL;
+  return raw === 'slow' || raw === 'fast' || raw === 'ultra'
+    ? raw
+    : DEFAULT_SPEED_LEVEL;
 }
 
 /** The motion plan profile is a flat JSON object; nested objects (gripper)
@@ -255,7 +258,7 @@ export type BookStandSlotsDocument = {
   slots: Record<string, Record<string, unknown>>;
 };
 
-export type BookStandGroup = 'place' | 'preplace';
+export type BookStandGroup = 'place' | 'preplace' | 'midtakeout_place';
 
 export type BookStandSlotsView = Record<
   BookStandGroup,

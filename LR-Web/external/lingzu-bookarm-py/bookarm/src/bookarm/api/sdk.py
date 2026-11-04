@@ -10,10 +10,12 @@ from bookarm.api.requests import (
     ReturnBookRequest,
     ReturnBookToEndRequest,
     TakeBookRequest,
+    TakeoutMode,
 )
 from bookarm.api.results import WorkflowResult, WorkflowTask
 from bookarm.application.task_manager import TaskManager
 from bookarm.application.use_cases.mid_return import MidReturnBookUseCase
+from bookarm.application.use_cases.mid_takeout import MidTakeoutUseCase
 from bookarm.application.use_cases.return_book import ReturnBookUseCase
 from bookarm.application.use_cases.return_book_to_end import ReturnBookToEndUseCase
 from bookarm.application.use_cases.take_book import TakeBookUseCase
@@ -47,16 +49,23 @@ class BookArmSDK:
         return_book: ReturnBookUseCase,
         return_book_to_end: ReturnBookToEndUseCase,
         mid_return: Optional[MidReturnBookUseCase] = None,
+        mid_takeout: Optional[MidTakeoutUseCase] = None,
     ) -> None:
         self._task_manager = task_manager
         self._take_book = take_book
         self._return_book = return_book
         self._return_book_to_end = return_book_to_end
         self._mid_return = mid_return
+        self._mid_takeout = mid_takeout
 
     def take_book(self, request: TakeBookRequest) -> WorkflowTask:
-        task = self._take_book.create(request)
-        self._take_book.execute(task, request)
+        use_case = self._take_book
+        if request.takeout_mode is TakeoutMode.MID:
+            if self._mid_takeout is None:
+                raise RuntimeError("mid-takeout workflow is not wired into this SDK instance")
+            use_case = self._mid_takeout
+        task = use_case.create(request)
+        use_case.execute(task, request)
         return task
 
     def return_book(self, request: ReturnBookRequest) -> WorkflowTask:

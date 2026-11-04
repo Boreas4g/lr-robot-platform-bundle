@@ -18,13 +18,13 @@ class MidReturnMotionPlan:
     approach, rod hook, fine grasp, close). Stage two puts the pulled book
     back loosely: push it back into the shelf along x, partially release,
     home the rod, then lower/shift/re-close/re-open/forward to clear the
-    gripper out and return to the debug pose. Stage three picks the book
-    to be returned from the calibrated book-stand pickup slot (preplace
-    group). Stage four re-locates the target book (the put-back may have
-    shifted it) and computes the insert Y1 directly from the fresh target
+    gripper out and return to the debug pose. Stage three re-locates the
+    target book, then picks the return book from the calibrated stand slot.
+    Stage four computes insert Y1 from that fresh target and moves directly
+    from the stand grasp to pre-insert without returning to debug
     (Y1 = target grasp y + the plan's target_y_offset_cm; the
     depth gap scan is no longer run in the automated workflow), inserts the
-    book at y=Y1 with x/z reused from the first-round vision target, pushes
+    book at y=Y1 with x/z reused from the fresh vision target, pushes
     it in along x, partially opens the gripper and retracts along x, then
     rotates the empty gripper at the retract pose, presses the book spines
     flush along x and retracts again before returning to the debug pose.
@@ -46,6 +46,9 @@ class MidReturnMotionPlan:
     debug_duration_s: float = 3.0
     # Open the gripper this far before the grasp chain / the book-slot pickup.
     pickup_open_deg: float = 50.0
+    # Lightly close at the slot, then move down along Z before the full grasp.
+    pickup_light_close_deg: float = 70.0
+    pickup_light_close_down_cm: float = 1.0
     # Grasp phase, mirroring the take-book offsets with mid-return defaults.
     pregrasp_offset_cm: Tuple[float, float, float] = (10.0, 0.0, 0.0)
     grasp_rpy_deg: Tuple[float, float, float] = (75.0, 0.0, 90.0)
@@ -94,7 +97,7 @@ class MidReturnMotionPlan:
     # workflow and the tuning session both read it from this plan, so it is
     # tuned here rather than passed per request.
     target_y_offset_cm: float = 4.0
-    # Insert pose: x/z reused from the post-pickup vision target and y=Y1,
+    # Insert pose: x/z reused from the fresh vision target and y=Y1,
     # then shifted by this base-frame offset; orientation is insert_rpy_deg.
     # rx beyond ~95 deg is outside the workspace at deep-shelf targets.
     insert_offset_cm: Tuple[float, float, float] = (0.0, 0.0, 0.0)
@@ -104,12 +107,12 @@ class MidReturnMotionPlan:
     # this are clamped up to the reachable minimum instead of failing IK.
     min_insert_z_m: float = 0.25
     # Pre-insert staging pose, flown MovePByJ before the final MoveL approach
-    # so the book never sweeps across the stand neighbours. Its x is an
-    # ABSOLUTE base-frame value: a relative offset from the recognized target
-    # dragged the staging pose out of the reachable zone on shallow targets,
-    # so the staging x is pinned and tuned here instead. y/z stay offsets
-    # from the insert pose (i.e. from the fresh recognition).
-    pre_insert_x_m: float = -0.33
+    # so the book never sweeps across the stand neighbours. Its x is computed
+    # per target by an IK search for the numerically greatest reachable value
+    # (see application.use_cases.mid_return.search_pre_insert_x), using the
+    # fresh insert pose and the y/z offsets below. The cap keeps the search
+    # out of the near-body flip zone.
+    pre_insert_x_max_m: float = -0.33
     pre_insert_y_offset_cm: float = 0.0
     pre_insert_z_offset_cm: float = 0.0
     pre_insert_duration_s: float = 3.0

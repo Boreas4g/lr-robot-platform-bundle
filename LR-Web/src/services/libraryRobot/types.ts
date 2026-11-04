@@ -16,6 +16,7 @@ export interface RobotSummary {
   currentTask: string;
   mapVersion: string;
   mapId?: string;
+  navigationControlMode?: 'differential' | 'ackermann';
   pose?: {
     frameId: 'map';
     x: number;
@@ -75,10 +76,23 @@ export interface ControlStationHealth {
 
 /** 还书模式：mid 中位还书（默认）；end 末尾还书（识别目标书后插到其旁）。 */
 export type ReturnMode = 'mid' | 'end';
+export type TakeoutMode = 'standard' | 'mid';
 
 export interface DispatchTask {
   id: string;
-  type: 'borrow' | 'return' | 'inventory' | 'navigate' | 'cruise' | 'charge' | 'arm_test' | 'takeout' | 'multi_round' | 'fine_tune';
+  type:
+    | 'borrow'
+    | 'return'
+    | 'inventory'
+    | 'navigate'
+    | 'cruise'
+    | 'charge'
+    | 'arm_test'
+    | 'takeout'
+    | 'multi_round'
+    | 'fine_tune'
+    | 'shelf_internal'
+    | 'shelf_move';
   robotId: string;
   target: string;
   status: 'queued' | 'running' | 'paused' | 'failed' | 'completed' | 'cancelled' | 'recovery_required';
@@ -91,7 +105,7 @@ export interface DispatchTask {
   loopCount?: number;
   bookId?: string;
   bookTitle?: string;
-  workflowMode?: 'takeout' | 'putback' | 'putback2' | 'tail_putback';
+  workflowMode?: 'takeout' | 'mid_takeout' | 'putback' | 'putback2' | 'tail_putback';
   deliveryAnnotationId?: string;
   deliveryLabel?: string;
   workflowId?: string;
@@ -105,12 +119,20 @@ export interface DispatchTask {
     preflightState?: 'required' | 'moving' | 'complete' | 'failed';
     preflightName?: string;
     templateId?: string;
+    takeoutMode?: TakeoutMode;
     destinationSlot?: number;
     sourceSlot?: number;
     liftHeightMm?: number;
     bookarmTaskId?: string;
     navigationTaskId?: string;
     fineTuneTaskId?: string;
+    shelfMoveTaskId?: string;
+    shelf1Target?: { x: number; y: number; yaw: number };
+    shelf2Target?: { x: number; y: number; yaw: number };
+    shelf1LiftHeightMm?: number;
+    shelf2LiftHeightMm?: number;
+    moveSpeedMps?: number;
+    enableVehicleAlignment?: boolean;
     annotationNavigation?: boolean;
     /** 还书任务实际使用的还书模式（缺省为中位还书）。 */
     returnMode?: ReturnMode;

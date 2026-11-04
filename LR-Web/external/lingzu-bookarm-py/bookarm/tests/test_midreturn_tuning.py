@@ -72,6 +72,8 @@ class MidReturnProfileTests(unittest.TestCase):
         self.assertEqual(profile["rod_tolerance_deg"], 1.5)
         self.assertEqual(profile["rod_timeout_s"], 12.0)
         self.assertEqual(profile["gripper"]["close_deg"], 108.5)
+        self.assertEqual(profile["gripper"]["kp"], 40.0)
+        self.assertEqual(profile["gripper"]["kd"], 3.0)
         # Put-back and clear-out of the pulled book.
         self.assertEqual(profile["push_in_x_offset_cm"], -5.0)
         self.assertEqual(profile["push_in_duration_s"], 2.0)
@@ -85,8 +87,8 @@ class MidReturnProfileTests(unittest.TestCase):
         self.assertEqual(profile["forward_duration_s"], 2.0)
         # Insert Y offset (no gap scan anywhere in the flow).
         self.assertEqual(profile["target_y_offset_cm"], 4.0)
-        # Pre-insert staging: pinned base-frame x plus y/z offsets.
-        self.assertEqual(profile["pre_insert_x_m"], -0.33)
+        # Pre-insert staging: dynamic IK-searched x capped by the plan, plus y/z offsets.
+        self.assertEqual(profile["pre_insert_x_max_m"], -0.33)
         self.assertEqual(profile["pre_insert_y_offset_cm"], 0.0)
         self.assertEqual(profile["pre_insert_z_offset_cm"], 0.0)
         self.assertEqual(profile["pre_insert_duration_s"], 3.0)
@@ -131,6 +133,22 @@ class MidReturnProfileTests(unittest.TestCase):
             "retreat_shelf_duration_s",
         ):
             self.assertNotIn(removed, profile)
+
+    def test_legacy_light_close_forward_distance_migrates_to_down(self):
+        path = Path(self._dirs.name) / "legacy-light-close.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "pickup_light_close_forward_cm": 2.0,
+                    "pickup_raise_z_offset_cm": 1.0,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        plan = load_mid_return_motion_plan(path)
+
+        self.assertEqual(plan.pickup_light_close_down_cm, 2.0)
 
     def test_put_partial_update_applies_and_persists(self):
         response = self.client.put(
@@ -233,11 +251,11 @@ class MidReturnSessionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         return response.json()
 
-    def test_session_walks_all_thirty_five_steps(self):
+    def test_session_walks_all_thirty_six_steps(self):
         session = self.client.get("%s/session" % KIND_URL).json()
         self.assertEqual(session["step_index"], 0)
         self.assertFalse(session["has_target"])
-        self.assertEqual(len(session["steps"]), 35)
+        self.assertEqual(len(session["steps"]), 36)
         self.assertEqual(
             session["steps"],
             [
@@ -261,11 +279,12 @@ class MidReturnSessionTests(unittest.TestCase):
                 "机械臂前移(forward_x)",
                 "回调试位",
                 "张开夹爪(pickup_open_deg)",
-                "运动到书槽(pre_grasp→grasp)",
-                "闭合夹爪",
-                "回调试位",
-                "推杆(rod_insert_deg)",
                 "识别目标书",
+                "运动到书槽(pre_grasp→grasp)",
+                "轻闭合夹爪并向下移动",
+                "闭合夹爪",
+                "推杆(rod_insert_deg)",
+                "到预抓取位",
                 "预插入位",
                 "运动到插入位",
                 "推回书架(push_x)",
@@ -285,7 +304,7 @@ class MidReturnSessionTests(unittest.TestCase):
 
         step_names = []
         details = []
-        for expected_index in range(1, 36):
+        for expected_index in range(1, 37):
             step = self.client.post("%s/session/step/next" % KIND_URL)
             self.assertEqual(step.status_code, 200)
             self.assertTrue(step.json()["ok"])
@@ -327,52 +346,60 @@ class MidReturnSessionTests(unittest.TestCase):
         self.assertAlmostEqual(details[17]["base_pose"][1], -0.02)
         self.assertAlmostEqual(details[17]["base_pose"][2], 0.18)
         self.assertEqual(len(details[18]["debug_joint_rad"]), 6)
-        # Book-slot pickup from the calibrated preplace slot.
         self.assertEqual(details[19]["open_deg"], 50.0)
-        self.assertEqual(len(details[20]["pre_grasp_pose"]), 6)
-        self.assertEqual(len(details[20]["grasp_pose"]), 6)
-        self.assertAlmostEqual(details[20]["pre_grasp_pose"][0], -0.30)
-        self.assertAlmostEqual(details[20]["grasp_pose"][0], -0.34)
-        self.assertIn("gripper_close", details[21])
-        self.assertEqual(len(details[22]["debug_joint_rad"]), 6)
-        # 取书回调试位后伸推杆（默认 0° 不动），随后才重新识别目标书。
-        self.assertEqual(step_names[23], "推杆(rod_insert_deg)")
-        self.assertEqual(details[23]["rod_deg"], 0.0)
-        # The post-pickup retarget re-locates the same target book; the
-        # insert chain anchors on this fresh recognition.
-        self.assertEqual(step_names[24], "识别目标书")
-        self.assertEqual(len(details[24]["target_base_pose"]), 6)
-        self.assertAlmostEqual(details[24]["target_base_pose"][1], -0.07)
+        # Retarget before pickup, then hold the book and go directly to pre-insert.
+        self.assertEqual(step_names[20], "识别目标书")
+        self.assertEqual(len(details[20]["target_base_pose"]), 6)
+        self.assertAlmostEqual(details[20]["target_base_pose"][1], -0.07)
+        self.assertEqual(len(details[21]["pre_grasp_pose"]), 6)
+        self.assertEqual(len(details[21]["grasp_pose"]), 6)
+        self.assertAlmostEqual(details[21]["pre_grasp_pose"][0], -0.30)
+        self.assertAlmostEqual(details[21]["grasp_pose"][0], -0.34)
+        self.assertIn("gripper_close", details[22])
+        self.assertEqual(details[22]["light_close_deg"], 70.0)
+        self.assertEqual(details[22]["down_cm"], 1.0)
+        self.assertAlmostEqual(details[22]["base_pose"][0], -0.34)
+        self.assertAlmostEqual(
+            details[22]["base_pose"][2], details[21]["grasp_pose"][2] - 0.01
+        )
+        self.assertIn("gripper_close", details[23])
+        self.assertTrue(details[23]["adaptive_carry"])
+        self.assertEqual(details[23]["carry_effort"], 0.50)
+        self.assertEqual(step_names[24], "推杆(rod_insert_deg)")
+        self.assertEqual(details[24]["rod_deg"], 0.0)
+        self.assertEqual(step_names[25], "到预抓取位")
+        self.assertAlmostEqual(details[25]["base_pose"][0], -0.30)
         # No gap scan anywhere: the insert chain derives y directly from the
         # fresh target plus the plan's target_y_offset_cm (4 cm), so
         # y = -0.07 + 0.04 = -0.03 for every insert-side pose, and z (0.23) is
         # clamped up to the plan's 0.25 m reachability floor.
-        # Pre-insert: pinned base-frame x (-0.33), y/z from the insert pose.
-        pre_insert_pose = details[25]["base_pose"]
+        # Pre-insert: the fake arm reaches every candidate, so the dynamic x
+        # search stops at its -0.33 cap; y/z come from the insert pose.
+        pre_insert_pose = details[26]["base_pose"]
         self.assertAlmostEqual(pre_insert_pose[0], -0.33)
         self.assertAlmostEqual(pre_insert_pose[1], -0.03)
         self.assertAlmostEqual(pre_insert_pose[2], 0.25)
         # Insert pose: vision x plus insert_offset_cm, y=Y1, clamped z, insert rpy.
-        insert_pose = details[26]["base_pose"]
+        insert_pose = details[27]["base_pose"]
         self.assertAlmostEqual(insert_pose[0], -0.35)
         self.assertAlmostEqual(insert_pose[1], -0.03)
         self.assertAlmostEqual(insert_pose[2], 0.25)
         # Push changes only x: -0.35 + (-5 cm) = -0.40.
-        push_pose = details[27]["base_pose"]
+        push_pose = details[28]["base_pose"]
         self.assertAlmostEqual(push_pose[0], -0.40)
         self.assertAlmostEqual(push_pose[1], insert_pose[1])
         self.assertAlmostEqual(push_pose[2], insert_pose[2])
         # 推回书架后推杆收回归位（默认 0°），然后才松爪。
-        self.assertEqual(step_names[28], "推杆回位")
-        self.assertEqual(details[28]["rod_deg"], 0.0)
-        self.assertEqual(details[29]["open_deg"], 50.0)
+        self.assertEqual(step_names[29], "推杆回位")
+        self.assertEqual(details[29]["rod_deg"], 0.0)
+        self.assertEqual(details[30]["open_deg"], 50.0)
         # Retract changes only x: -0.40 + 10 cm = -0.30.
-        retract_pose = details[30]["base_pose"]
+        retract_pose = details[31]["base_pose"]
         self.assertAlmostEqual(retract_pose[0], -0.30)
         self.assertAlmostEqual(retract_pose[1], insert_pose[1])
         self.assertAlmostEqual(retract_pose[2], insert_pose[2])
         # 旋转：位置与回抽位相同，ry 在回抽姿态（ry=0）上加 90°。
-        rotate_pose = details[31]["base_pose"]
+        rotate_pose = details[32]["base_pose"]
         self.assertAlmostEqual(rotate_pose[0], -0.30)
         self.assertAlmostEqual(rotate_pose[1], retract_pose[1])
         self.assertAlmostEqual(rotate_pose[2], retract_pose[2])
@@ -380,13 +407,13 @@ class MidReturnSessionTests(unittest.TestCase):
         self.assertAlmostEqual(rotate_pose[4], retract_pose[4] + math.radians(90.0))
         self.assertAlmostEqual(rotate_pose[5], retract_pose[5])
         # 推回压书只变 x：-0.30 + (-5 cm) = -0.35；二次回抽 +5 cm 回到 -0.30。
-        press_pose = details[32]["base_pose"]
+        press_pose = details[33]["base_pose"]
         self.assertAlmostEqual(press_pose[0], -0.35)
         self.assertAlmostEqual(press_pose[4], rotate_pose[4])
-        press_retract_pose = details[33]["base_pose"]
+        press_retract_pose = details[34]["base_pose"]
         self.assertAlmostEqual(press_retract_pose[0], -0.30)
         self.assertAlmostEqual(press_retract_pose[4], rotate_pose[4])
-        self.assertEqual(len(details[34]["debug_joint_rad"]), 6)
+        self.assertEqual(len(details[35]["debug_joint_rad"]), 6)
 
         finished = self.client.post("%s/session/step/next" % KIND_URL)
         self.assertEqual(finished.status_code, 200)
@@ -400,13 +427,13 @@ class MidReturnSessionTests(unittest.TestCase):
         previous = self.client.post("%s/session/step/previous" % KIND_URL)
         self.assertEqual(previous.status_code, 200)
         self.assertEqual(previous.json()["step_name"], "回调试位")
-        self.assertEqual(previous.json()["step_index"], 35)
+        self.assertEqual(previous.json()["step_index"], 36)
 
         # run executes one arbitrary step for single-step verification.
-        ran = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 26})
+        ran = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 27})
         self.assertEqual(ran.status_code, 200)
         self.assertEqual(ran.json()["step_name"], "运动到插入位")
-        out_of_range = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 35})
+        out_of_range = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 36})
         self.assertEqual(out_of_range.status_code, 422)
 
         # reset rewinds the cursor but keeps the cached target.
@@ -423,23 +450,23 @@ class MidReturnSessionTests(unittest.TestCase):
         self.assertIn("请先准备", unprepared.json()["detail"])
 
         unprepared_insert = self.client.post(
-            "%s/session/step/run" % KIND_URL, json={"index": 26}
+            "%s/session/step/run" % KIND_URL, json={"index": 27}
         )
         self.assertEqual(unprepared_insert.status_code, 409)
         self.assertIn("请先准备", unprepared_insert.json()["detail"])
 
         self.prepare(slot=1)
-        # The insert chain needs the post-pickup retarget step first.
-        for index in (25, 26):
+        # The insert chain needs the pre-pickup retarget step first.
+        for index in (26, 27):
             no_retarget = self.client.post(
                 "%s/session/step/run" % KIND_URL, json={"index": index}
             )
             self.assertEqual(no_retarget.status_code, 409)
             self.assertIn("识别目标书", no_retarget.json()["detail"])
 
-        retarget = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 24})
+        retarget = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 20})
         self.assertEqual(retarget.status_code, 200)
-        for index in (25, 26):
+        for index in (26, 27):
             ran = self.client.post("%s/session/step/run" % KIND_URL, json={"index": index})
             self.assertEqual(ran.status_code, 200)
 
@@ -447,13 +474,13 @@ class MidReturnSessionTests(unittest.TestCase):
         # Before prepare, target- and slot-dependent steps explain why they
         # cannot be previewed.
         view = self.client.get("%s/session/step/preview?all=1" % KIND_URL).json()
-        self.assertEqual(len(view["steps"]), 35)
+        self.assertEqual(len(view["steps"]), 36)
         self.assertIsNone(view["steps"][2]["motion"])
         self.assertIn("请先准备", view["steps"][2]["reason"])
-        self.assertIsNone(view["steps"][20]["motion"])
-        self.assertIn("请先准备", view["steps"][20]["reason"])
-        self.assertIsNone(view["steps"][25]["motion"])
-        self.assertIn("识别目标书", view["steps"][25]["reason"])
+        self.assertIsNone(view["steps"][21]["motion"])
+        self.assertIn("请先准备", view["steps"][21]["reason"])
+        self.assertIsNone(view["steps"][26]["motion"])
+        self.assertIn("识别目标书", view["steps"][26]["reason"])
 
         self.prepare(slot=1)
         view = self.client.get("%s/session/step/preview?all=1" % KIND_URL).json()
@@ -469,34 +496,36 @@ class MidReturnSessionTests(unittest.TestCase):
         self.assertAlmostEqual(view["steps"][15]["motion"]["x_mm"], -360.0)
         self.assertAlmostEqual(view["steps"][17]["motion"]["x_mm"], -260.0)
         self.assertAlmostEqual(view["steps"][17]["motion"]["z_mm"], 180.0)
-        # The book-slot step previews the preplace slot selected at prepare.
-        self.assertAlmostEqual(view["steps"][20]["motion"]["x_mm"], -300.0)
-        self.assertTrue(view["steps"][20]["motion"]["continues"])
-        # The insert chain waits for the post-pickup retarget step.
-        for index in (25, 26, 27, 30, 31, 32, 33):
+        # The slot and light-close steps follow the earlier retarget.
+        self.assertAlmostEqual(view["steps"][21]["motion"]["x_mm"], -300.0)
+        self.assertTrue(view["steps"][21]["motion"]["continues"])
+        self.assertAlmostEqual(view["steps"][22]["motion"]["x_mm"], -340.0)
+        self.assertAlmostEqual(view["steps"][25]["motion"]["x_mm"], -300.0)
+        # The insert chain waits for the pre-pickup retarget step.
+        for index in (26, 27, 28, 31, 32, 33, 34):
             self.assertIsNone(view["steps"][index]["motion"])
             self.assertIn("识别目标书", view["steps"][index]["reason"])
 
-        ran = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 24})
+        ran = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 20})
         self.assertEqual(ran.status_code, 200)
         view = self.client.get("%s/session/step/preview?all=1" % KIND_URL).json()
         # After the retarget the insert chain previews: y = fresh target y
         # (-0.07) + 4 cm offset = -0.03 m.
-        self.assertAlmostEqual(view["steps"][25]["motion"]["x_mm"], -330.0)
-        self.assertEqual(view["steps"][25]["motion"]["method"], "move_p_by_j")
-        self.assertAlmostEqual(view["steps"][26]["motion"]["x_mm"], -350.0)
-        self.assertAlmostEqual(view["steps"][26]["motion"]["y_mm"], -30.0)
-        self.assertAlmostEqual(view["steps"][26]["motion"]["rx_deg"], 95.0)
-        self.assertEqual(view["steps"][26]["motion"]["method"], "move_l")
-        self.assertAlmostEqual(view["steps"][27]["motion"]["x_mm"], -400.0)
-        self.assertAlmostEqual(view["steps"][30]["motion"]["x_mm"], -300.0)
-        # 旋转保持回抽位位置、ry 加 90°；推回 x -5 cm；二次回抽 x 回到 -0.30 m。
+        self.assertAlmostEqual(view["steps"][26]["motion"]["x_mm"], -330.0)
+        self.assertEqual(view["steps"][26]["motion"]["method"], "move_p_by_j")
+        self.assertAlmostEqual(view["steps"][27]["motion"]["x_mm"], -350.0)
+        self.assertAlmostEqual(view["steps"][27]["motion"]["y_mm"], -30.0)
+        self.assertAlmostEqual(view["steps"][27]["motion"]["rx_deg"], 95.0)
+        self.assertEqual(view["steps"][27]["motion"]["method"], "move_l")
+        self.assertAlmostEqual(view["steps"][28]["motion"]["x_mm"], -400.0)
         self.assertAlmostEqual(view["steps"][31]["motion"]["x_mm"], -300.0)
-        self.assertAlmostEqual(view["steps"][31]["motion"]["ry_deg"], 90.0)
-        self.assertEqual(view["steps"][31]["motion"]["method"], "move_l")
-        self.assertAlmostEqual(view["steps"][32]["motion"]["x_mm"], -350.0)
+        # 旋转保持回抽位位置、ry 加 90°；推回 x -5 cm；二次回抽 x 回到 -0.30 m。
+        self.assertAlmostEqual(view["steps"][32]["motion"]["x_mm"], -300.0)
         self.assertAlmostEqual(view["steps"][32]["motion"]["ry_deg"], 90.0)
-        self.assertAlmostEqual(view["steps"][33]["motion"]["x_mm"], -300.0)
+        self.assertEqual(view["steps"][32]["motion"]["method"], "move_l")
+        self.assertAlmostEqual(view["steps"][33]["motion"]["x_mm"], -350.0)
+        self.assertAlmostEqual(view["steps"][33]["motion"]["ry_deg"], 90.0)
+        self.assertAlmostEqual(view["steps"][34]["motion"]["x_mm"], -300.0)
 
         # A hot-applied profile update changes the very next preview.
         applied = self.client.put(
@@ -505,11 +534,11 @@ class MidReturnSessionTests(unittest.TestCase):
         )
         self.assertEqual(applied.status_code, 200)
         updated = self.client.get(
-            "%s/session/step/preview?step_index=26" % KIND_URL
+            "%s/session/step/preview?step_index=27" % KIND_URL
         ).json()
         self.assertAlmostEqual(updated["motion"]["x_mm"], -340.0)
         # The executed step sends exactly the advertised pose.
-        ran = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 26})
+        ran = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 27})
         self.assertEqual(ran.status_code, 200)
         self.assertAlmostEqual(ran.json()["detail"]["base_pose"][0], -0.34)
 
@@ -520,7 +549,7 @@ class MidReturnSessionTests(unittest.TestCase):
         )
         self.assertEqual(applied.status_code, 200)
         updated = self.client.get(
-            "%s/session/step/preview?step_index=26" % KIND_URL
+            "%s/session/step/preview?step_index=27" % KIND_URL
         ).json()
         self.assertAlmostEqual(updated["motion"]["y_mm"], 10.0)
 
@@ -532,7 +561,7 @@ class MidReturnSessionTests(unittest.TestCase):
         )
         self.assertEqual(applied.status_code, 200)
         updated = self.client.get(
-            "%s/session/step/preview?step_index=31" % KIND_URL
+            "%s/session/step/preview?step_index=32" % KIND_URL
         ).json()
         self.assertAlmostEqual(updated["motion"]["z_mm"], 220.0)
         self.assertAlmostEqual(updated["motion"]["ry_deg"], 90.0)
@@ -544,7 +573,7 @@ class MidReturnSessionTests(unittest.TestCase):
         )
         self.assertEqual(applied.status_code, 200)
         updated = self.client.get(
-            "%s/session/step/preview?step_index=27" % KIND_URL
+            "%s/session/step/preview?step_index=28" % KIND_URL
         ).json()
         self.assertAlmostEqual(updated["motion"]["z_mm"], 220.0)
 
@@ -573,7 +602,7 @@ class MidReturnSessionTests(unittest.TestCase):
     def test_pickup_slot_hot_swap_updates_the_book_slot_step(self):
         self.prepare(slot=1)
         before = self.client.get(
-            "%s/session/step/preview?step_index=20" % KIND_URL
+            "%s/session/step/preview?step_index=21" % KIND_URL
         ).json()
         self.assertAlmostEqual(before["motion"]["x_mm"], -300.0)
 
@@ -585,11 +614,11 @@ class MidReturnSessionTests(unittest.TestCase):
         self.assertEqual(applied.status_code, 200)
 
         after = self.client.get(
-            "%s/session/step/preview?step_index=20" % KIND_URL
+            "%s/session/step/preview?step_index=21" % KIND_URL
         ).json()
         self.assertAlmostEqual(after["motion"]["x_mm"], -250.0)
         # The executed step sends exactly the advertised slot pose.
-        ran = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 20})
+        ran = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 21})
         self.assertEqual(ran.status_code, 200)
         self.assertAlmostEqual(ran.json()["detail"]["pre_grasp_pose"][0], -0.25)
 
@@ -611,9 +640,9 @@ class MidReturnSessionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
 
         self.prepare(slot=1)
-        retarget = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 24})
+        retarget = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 20})
         self.assertEqual(retarget.status_code, 200)
-        step = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 27})
+        step = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 28})
         self.assertEqual(step.status_code, 200)
         self.assertEqual(step.json()["step_name"], "推回书架(push_x)")
         self.assertAlmostEqual(step.json()["detail"]["base_pose"][0], -0.43)
@@ -625,8 +654,8 @@ class MidReturnSessionTests(unittest.TestCase):
         )
         self.assertEqual(applied.status_code, 200)
 
-        # 推杆(rod_insert_deg) is step index 23 in the mid-return session.
-        ran = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 23})
+        # 推杆(rod_insert_deg) is step index 24 in the mid-return session.
+        ran = self.client.post("%s/session/step/run" % KIND_URL, json={"index": 24})
         self.assertEqual(ran.status_code, 200)
         self.assertEqual(ran.json()["step_name"], "推杆(rod_insert_deg)")
         self.assertEqual(ran.json()["detail"]["rod_deg"], -30.0)
@@ -728,8 +757,8 @@ class MidReturnLoaderTests(unittest.TestCase):
                 load_mid_return_motion_plan(retired)
 
             bad = Path(directory) / "bad.json"
-            bad.write_text(json.dumps({"pre_insert_x_m": -1.5}), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "pre_insert_x_m"):
+            bad.write_text(json.dumps({"pre_insert_x_max_m": -1.5}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "pre_insert_x_max_m"):
                 load_mid_return_motion_plan(bad)
 
             bad_offset = Path(directory) / "bad_offset.json"
@@ -756,7 +785,7 @@ class MidReturnLoaderTests(unittest.TestCase):
                 encoding="utf-8",
             )
             loaded = load_mid_return_motion_plan(ok)
-            self.assertEqual(loaded.pre_insert_x_m, -0.3)
+            self.assertEqual(loaded.pre_insert_x_max_m, -0.3)
             self.assertEqual(loaded.pre_insert_y_offset_cm, 1.0)
             self.assertEqual(loaded.pre_insert_z_offset_cm, 5.0)
 

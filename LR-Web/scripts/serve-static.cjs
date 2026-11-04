@@ -45,6 +45,14 @@ function bookarmProxyOptions() {
       }
       return next;
     },
+    proxyErrorHandler: (error, res, next) => {
+      if (['ENOENT', 'ECONNREFUSED', 'EACCES', 'ENOTSOCK'].includes(error?.code)) {
+        return res.status(503).json({
+          detail: '机械臂硬件服务当前未运行或本地接口不可达，请检查 BookArm 服务和设备连接。',
+        });
+      }
+      return next(error);
+    },
   };
   return options;
 }

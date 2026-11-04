@@ -44,6 +44,7 @@ import {
   getRobots,
   saveMapping,
   sendMappingJog,
+  setNavigationControlMode,
   startMapping,
   stopMapping,
 } from '@/services/libraryRobot';
@@ -58,7 +59,9 @@ import {
   GAMEPAD_ANGULAR_SPEED,
   GAMEPAD_LINEAR_SPEED,
 } from './gamepad';
+import MapEditor from './MapEditor';
 import { useMappingGamepad } from './useMappingGamepad';
+import { useMappingKeyboard } from './useMappingKeyboard';
 
 const LINEAR_SPEED = 0.2;
 const ANGULAR_SPEED = 0.5;
@@ -78,6 +81,7 @@ export default function LibraryMappingPage() {
   const [mappingStatus, setMappingStatus] = useState<MappingStatus>();
   const [statusError, setStatusError] = useState<string>();
   const [actionLoading, setActionLoading] = useState<'start' | 'stop'>();
+  const [controlModeSaving, setControlModeSaving] = useState(false);
   const [snapshotUrl, setSnapshotUrl] = useState<string>();
   const [snapshotError, setSnapshotError] = useState<string>();
   const snapshotRef = useRef<string | undefined>(undefined);
@@ -98,6 +102,30 @@ export default function LibraryMappingPage() {
   // transition（双栈皆停、导航恢复中）也允许点击"结束并恢复导航"作为死锁出口。
   const stopAllowed =
     mappingStatus?.mode === 'mapping' || mappingStatus?.mode === 'transition';
+  const selectedRobot = robots.find((robot) => robot.id === robotId);
+
+  async function changeControlMode(mode: 'differential' | 'ackermann') {
+    if (!robotId) return;
+    releaseJog();
+    setControlModeSaving(true);
+    try {
+      const updated = await setNavigationControlMode(robotId, mode);
+      setRobots((current) =>
+        current.map((robot) => (robot.id === updated.id ? updated : robot)),
+      );
+      message.success(
+        mode === 'ackermann'
+          ? '建图与导航已切换为类阿克曼模式，最小转弯半径 1 m。'
+          : '建图与导航已切换为差速模式。',
+      );
+    } catch (error) {
+      message.error(
+        error instanceof Error ? error.message : '切换控制模式失败。',
+      );
+    } finally {
+      setControlModeSaving(false);
+    }
+  }
 
   function replaceSnapshot(url?: string) {
     if (snapshotRef.current) URL.revokeObjectURL(snapshotRef.current);
@@ -226,6 +254,11 @@ export default function LibraryMappingPage() {
     robotId,
     active: mappingActive && gamepadEnabled,
     onMark: () => void submitMark(),
+  });
+  const { output: keyboardOutput } = useMappingKeyboard({
+    robotId,
+    active: mappingActive,
+    controlMode: selectedRobot?.navigationControlMode ?? 'differential',
   });
 
   async function refreshMarks(targetRobotId?: string) {
@@ -511,6 +544,25 @@ export default function LibraryMappingPage() {
               )
             }
           >
+            <Space
+              orientation="vertical"
+              size={4}
+              style={{ width: '100%', marginBottom: 16 }}
+            >
+              <Typography.Text type="secondary">控制方式：</Typography.Text>
+              <Select
+                value={selectedRobot?.navigationControlMode ?? 'differential'}
+                loading={controlModeSaving}
+                disabled={!selectedRobot || controlModeSaving}
+                onChange={(mode: 'differential' | 'ackermann') =>
+                  void changeControlMode(mode)
+                }
+                options={[
+                  { value: 'differential', label: '差速（允许原地转向）' },
+                  { value: 'ackermann', label: '类阿克曼（最小半径 1 m）' },
+                ]}
+              />
+            </Space>
             <div
               style={{
                 display: 'grid',
@@ -599,6 +651,16 @@ export default function LibraryMappingPage() {
               {ANGULAR_SPEED} rad/s），松开自动停车；车端 0.6
               秒看门狗超时也会自动停车。
             </Typography.Paragraph>
+            <Space vertical size={4} style={{ marginTop: 12, width: '100%' }}>
+              <Typography.Text type="secondary">
+                键盘：W/↑ 前进、S/↓ 后退、A/← 左转、D/→
+                右转，支持组合键；空格立即停车。
+              </Typography.Text>
+              <Typography.Text type="secondary">
+                当前键盘输出：线速度 {keyboardOutput.linear.toFixed(2)}{' '}
+                m/s，角速度 {keyboardOutput.angular.toFixed(2)} rad/s
+              </Typography.Text>
+            </Space>
             <Space vertical size={8} style={{ marginTop: 16, width: '100%' }}>
               <Space wrap>
                 <Switch
@@ -702,6 +764,7 @@ export default function LibraryMappingPage() {
           </Card>
         </Col>
       </Row>
+      <MapEditor />
       <Modal
         destroyOnClose
         open={saveOpen}

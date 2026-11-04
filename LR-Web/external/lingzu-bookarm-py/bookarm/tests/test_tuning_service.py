@@ -430,25 +430,25 @@ class TuningServiceTests(unittest.TestCase):
             "%s/midreturn/session/step/preview?all=1" % TUNING_URL
         ).json()
 
-        # The insert pose waits for the post-pickup retarget step.
-        insert = view["steps"][26]
+        # The insert pose waits for the pre-pickup retarget step.
+        insert = view["steps"][27]
         self.assertEqual(insert["step_name"], "运动到插入位")
         self.assertIsNone(insert["motion"])
         self.assertIn("识别目标书", insert["reason"])
         # The book-slot step previews the selected pickup slot right away.
-        slot_step = view["steps"][20]
+        slot_step = view["steps"][21]
         self.assertEqual(slot_step["step_name"], "运动到书槽(pre_grasp→grasp)")
         self.assertAlmostEqual(slot_step["motion"]["x_mm"], -300.0)
 
         # After the retarget the insert pose previews off the fresh target.
         ran = self.client.post(
-            "%s/midreturn/session/step/run" % TUNING_URL, json={"index": 24}
+            "%s/midreturn/session/step/run" % TUNING_URL, json={"index": 20}
         )
         self.assertEqual(ran.status_code, 200)
         view = self.client.get(
             "%s/midreturn/session/step/preview?all=1" % TUNING_URL
         ).json()
-        insert = view["steps"][26]
+        insert = view["steps"][27]
         self.assertIsNotNone(insert["motion"])
         self.assertAlmostEqual(insert["motion"]["y_mm"], -30.0)
 
@@ -1063,6 +1063,25 @@ class TuningServiceTests(unittest.TestCase):
         self.assertEqual(ran.status_code, 503)
         self.assertIn("simulated spine detection failure", ran.json()["detail"])
 
+    def test_spine_not_detected_is_not_reported_as_hardware_failure(self):
+        self.prepare("return", slot=1)
+        vision = self.tuning.return_book.session._devices.vision
+
+        def failed_locate(template):
+            raise RuntimeError("book spine was not detected within 10 D435 captures")
+
+        vision.locate_book = failed_locate
+        ran = self.client.post(
+            "%s/return/session/step/run" % TUNING_URL, json={"index": 2}
+        )
+
+        self.assertEqual(ran.status_code, 422)
+        self.assertIn("视觉识别失败", ran.json()["detail"])
+        self.assertIn("书脊模板", ran.json()["detail"])
+        self.assertIn("有效深度", ran.json()["detail"])
+        self.assertNotIn("can0", ran.json()["detail"])
+        self.assertNotIn("硬件状态不可用", ran.json()["detail"])
+
     def test_prepare_resolves_templates_through_the_studio_library(self):
         missing = self.client.post(
             "%s/take/session/prepare" % TUNING_URL,
@@ -1227,9 +1246,9 @@ class TuningServiceTests(unittest.TestCase):
         self.assertEqual(live.rod_speed, 1800)
         self.assertEqual(live.gripper.close_speed_deg_s, 60.12)
         self.assertEqual(live.gripper.open_speed_deg_s, 60.12)
-        self.assertEqual(live.gripper.command_lead_s, 0.15)
+        self.assertEqual(live.gripper.command_lead_s, 0.39)
         self.assertEqual(live.gripper.stall_time_s, 0.51)
-        self.assertEqual(live.gripper.contact_hold_duration_s, 0.6)
+        self.assertEqual(live.gripper.contact_hold_duration_s, 1.0)
         # Grasp-safety constants stay at the calibrated values.
         self.assertEqual(live.gripper.min_monitor_s, 0.4)
         self.assertEqual(live.gripper.effort, 0.5)
@@ -1266,7 +1285,7 @@ class TuningServiceTests(unittest.TestCase):
         self.assertEqual(self.runner.take_plan.zero_duration_s, 3.0)
         self.assertFalse((self.tuning_dir / "take_profile.json").exists())
 
-    def test_speed_level_back_to_standard_restores_the_legacy_plan(self):
+    def test_speed_level_back_to_standard_restores_the_base_plan(self):
         self.client.put("%s/take/profile" % TUNING_URL, json={"speed_level": "fast"})
         response = self.client.put("%s/take/profile" % TUNING_URL, json={"speed_level": "standard"})
 
@@ -1276,7 +1295,7 @@ class TuningServiceTests(unittest.TestCase):
         self.assertEqual(live.zero_duration_s, 3.0)
         self.assertEqual(live.rod_speed, 1000)
         self.assertEqual(live.gripper.close_speed_deg_s, 16.7)
-        self.assertEqual(live.gripper.command_lead_s, 0.25)
+        self.assertEqual(live.gripper.command_lead_s, 0.65)
 
     def test_speed_level_applies_to_return_and_midreturn_kinds(self):
         response = self.client.put("%s/return/profile" % TUNING_URL, json={"speed_level": "slow"})

@@ -95,13 +95,64 @@ def check_spine_tilt(target: BookTarget, plan: Any) -> Optional[float]:
     return tilt
 
 
-def take_book_grasp_poses(target: BookTarget, plan: Any) -> Dict[str, BasePose]:
-    """Return the same four poses used by the take-book reachability check."""
+def search_max_reachable_x(
+    check: Any,
+    pose_template: BasePose,
+    seed: Any,
+    x_max_m: Optional[float] = None,
+    *,
+    x_start_m: float = -0.05,
+    x_step_m: float = -0.01,
+    x_min_m: float = -0.80,
+    label: str,
+    error_label: str,
+    require_negative: bool = False,
+) -> float:
+    """Search downward from the cap and return the greatest reachable x."""
+
+    start_m = x_start_m if x_max_m is None else float(x_max_m)
+    steps = int(round((start_m - x_min_m) / abs(x_step_m)))
+    for index in range(steps + 1):
+        x_m = round(start_m + index * x_step_m, 6)
+        if require_negative and x_m >= 0.0:
+            break
+        candidate = replace(pose_template, x_m=x_m)
+        try:
+            check(candidate, seed, label=label)
+        except RuntimeError:
+            continue
+        return x_m
+    raise RuntimeError(
+        "%s无可达 x：在 [%.2f, %.2f] m 范围内 IK 均不收敛"
+        % (error_label, x_min_m, start_m)
+    )
+
+
+def take_book_grasp_poses(
+    target: BookTarget, plan: Any, check: Optional[Any] = None
+) -> Dict[str, BasePose]:
+    """Return the grasp chain, IK-searching the post-grasp x when check is given."""
 
     grasp_pose = target.grasp_pose
     fine_grasp = grasp_pose.offset_cm(
         plan.fine_grasp_offset_cm, rpy_deg=plan.fine_grasp_rpy_deg
     )
+    post_grasp = fine_grasp.offset_cm(
+        plan.post_grasp_offset_cm,
+        rpy_offset_deg=plan.post_grasp_rpy_offset_deg,
+    )
+    if check is not None:
+        post_grasp = replace(
+            post_grasp,
+            x_m=search_max_reachable_x(
+                check,
+                post_grasp,
+                plan.debug_joint,
+                x_max_m=post_grasp.x_m,
+                label="arm_post_grasp_x_search",
+                error_label="后撤位",
+            ),
+        )
     return {
         "arm_pregrasp": grasp_pose.offset_cm(
             plan.pregrasp_offset_cm, rpy_deg=plan.grasp_rpy_deg
@@ -110,10 +161,7 @@ def take_book_grasp_poses(target: BookTarget, plan: Any) -> Dict[str, BasePose]:
             plan.approach_offset_cm, rpy_deg=plan.grasp_rpy_deg
         ),
         "arm_fine_grasp": fine_grasp,
-        "arm_post_grasp": fine_grasp.offset_cm(
-            plan.post_grasp_offset_cm,
-            rpy_offset_deg=plan.post_grasp_rpy_offset_deg,
-        ),
+        "arm_post_grasp": post_grasp,
     }
 
 
@@ -180,7 +228,7 @@ def _take_book_chain_is_comfortable(
         check = arm.check_pose_reachable
     seed = plan.debug_joint
     try:
-        for label, pose in take_book_grasp_poses(target, plan).items():
+        for label, pose in take_book_grasp_poses(target, plan, check).items():
             seed = check(pose, seed, label=label)
             clearance_error = _joint_clearance_error(arm, seed, _comfort_margin_rad(plan))
             if clearance_error is not None:
@@ -493,6 +541,7 @@ def post_vision_check_align(
     arm: Any = None,
     engine: Any = None,
     task: Any = None,
+    vehicle_alignment_enabled: bool = True,
 ) -> Dict[str, Any]:
     """阶段动作入口：对 context[context_key] 中的识别结果做倾斜判定与居中对齐。
 
@@ -508,6 +557,10 @@ def post_vision_check_align(
         "spine_tilt_deg": None if tilt is None else round(tilt, 2),
         "spine_tilt_max_deg": float(plan.spine_tilt_max_deg),
     }
+    if not vehicle_alignment_enabled:
+        details["aligned"] = False
+        details["align_skipped"] = "disabled_by_request"
+        return details
     if vehicle is None:
         # 未接车端对齐服务时仅做倾斜判定（测试/降级环境），不尝试动车
         log.warning("车辆对齐客户端未配置，仅执行书脊倾斜判定")

@@ -19,7 +19,9 @@ _SUPPORTED_COMMANDS = frozenset(
         "set_initial_pose",
         "auto_localize",
         "fine_tune",
+        "shelf_move",
         "manual_jog",
+        "set_control_mode",
         "bookarm_test_start",
         "bookarm_test_continue",
         "bookarm_test_cancel",
@@ -73,6 +75,7 @@ class FineTuneTarget:
     x: float
     y: float
     yaw: float
+    speed_mps: float | None = None
 
 
 @dataclass(frozen=True)
@@ -248,7 +251,16 @@ def parse_fine_tune(
         raise ValueError("精调目标超出当前地图边界")
     if abs(yaw) > max_abs_yaw:
         raise ValueError("精调目标 yaw 超出允许范围")
-    return FineTuneTarget(map_id=map_id, x=x, y=y, yaw=yaw)
+    speed_value = payload.get("speedMps")
+    if speed_value is None:
+        speed_mps = None
+    else:
+        if isinstance(speed_value, bool) or not isinstance(speed_value, (int, float)):
+            raise ValueError("架内移动速度必须是有限数值")
+        speed_mps = float(speed_value)
+        if not math.isfinite(speed_mps) or not 0.0 <= speed_mps <= 0.50:
+            raise ValueError("架内移动速度必须在 0~0.50 m/s")
+    return FineTuneTarget(map_id=map_id, x=x, y=y, yaw=yaw, speed_mps=speed_mps)
 
 
 def _read_fine_tune_coordinate(payload: dict[str, Any], key: str) -> float:

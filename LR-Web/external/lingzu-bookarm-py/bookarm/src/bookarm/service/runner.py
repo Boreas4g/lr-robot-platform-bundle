@@ -19,12 +19,14 @@ from bookarm.api.requests import (
     ReturnBookStage,
     TakeBookRequest,
     TakeBookStage,
+    TakeoutMode,
 )
 from bookarm.api.results import WorkflowResult, WorkflowTask
 from bookarm.application.task_manager import TaskManager
 from bookarm.application.workflow_engine import WorkflowEngine, WorkflowStep
 from bookarm.domain.models.task import TaskState, WorkflowKind
 from bookarm.domain.plans.mid_return import MidReturnMotionPlan
+from bookarm.domain.plans.mid_takeout import MidTakeoutMotionPlan
 from bookarm.domain.plans.return_book import ReturnBookMotionPlan
 from bookarm.domain.plans.take_book import TakeBookMotionPlan
 from bookarm.runtime.bookarm_runtime import BookArmRuntime
@@ -161,12 +163,19 @@ class SdkWorkflowRunner(WorkflowRunner):
 
     def submit_take(self, request: TakeBookRequest) -> WorkflowTask:
         # BookArmSDK.take_book would create a second task; executing the
-        # take-book use case directly keeps the task returned by submit.
+        # selected use case directly keeps the task returned by submit.
+        use_case = self._runtime.sdk._take_book
+        thread_name = "takeout-sdk-task"
+        if getattr(request, "takeout_mode", TakeoutMode.STANDARD) is TakeoutMode.MID:
+            use_case = self._runtime.sdk._mid_takeout
+            if use_case is None:
+                raise RuntimeError("mid-takeout workflow is not wired into this SDK instance")
+            thread_name = "midtakeout-sdk-task"
         return self._submit(
             WorkflowKind.TAKE_BOOK,
             request,
-            self._runtime.sdk._take_book.execute,
-            "takeout-sdk-task",
+            use_case.execute,
+            thread_name,
         )
 
     def submit_return(self, request: ReturnBookRequest) -> WorkflowTask:
@@ -335,6 +344,7 @@ class FakeWorkflowRunner(WorkflowRunner):
         self.take_plan = TakeBookMotionPlan()
         self.return_plan = ReturnBookMotionPlan()
         self.mid_return_plan = MidReturnMotionPlan()
+        self.mid_takeout_plan = MidTakeoutMotionPlan()
 
     @property
     def mode(self) -> str:
@@ -443,6 +453,7 @@ class FakeWorkflowRunner(WorkflowRunner):
             elif stage == ReturnBookStage.VISION_RETARGET.value:
                 details["left_neighbor_spine_template"] = request.left_neighbor_spine_template.path
         else:
+            details["takeout_mode"] = request.takeout_mode.value
             if stage == TakeBookStage.VISION_TARGET.value:
                 details["spine_template"] = request.spine_template.path
             elif stage == TakeBookStage.BOOK_STAND_PLACE.value:

@@ -255,6 +255,22 @@ def parse_pgm(data: bytes) -> PgmImage:
     return PgmImage(width=width, height=height, max_value=255, pixels=pixels)
 
 
+def edit_pgm_pixels(image: PgmImage, edits: list[tuple[int, int, int]]) -> PgmImage:
+    pixels = bytearray(image.pixels)
+    for x, y, value in edits:
+        if not 0 <= x < image.width or not 0 <= y < image.height:
+            raise ValueError(f"地图编辑坐标越界: ({x}, {y})")
+        if value not in {0, 100}:
+            raise ValueError("地图编辑值仅支持 0（擦除）或 100（占用）")
+        index = (image.height - 1 - y) * image.width + x
+        pixels[index] = 0 if value == 100 else 254
+    return PgmImage(width=image.width, height=image.height, max_value=255, pixels=bytes(pixels))
+
+
+def pgm_binary(image: PgmImage) -> bytes:
+    return f"P5\n{image.width} {image.height}\n{image.max_value}\n".encode("ascii") + image.pixels
+
+
 def pgm_preview_png(image: PgmImage, metadata: RosMapMetadata) -> bytes:
     """Render ROS occupancy values into an ordinary PNG for browser display."""
     rows = bytearray()

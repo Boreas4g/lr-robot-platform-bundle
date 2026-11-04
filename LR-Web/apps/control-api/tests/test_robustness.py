@@ -456,6 +456,10 @@ def test_recovery_required_parks_task_and_dismiss_settles_it() -> None:
         assert "机械臂中断待确认" in (parked.workflowMessage or "")
         assert "ik" in (parked.failureReason or "")
 
+        robot_index = next(index for index, item in enumerate(store.robots) if item.id == "LR-01")
+        store.robots[robot_index] = store.robots[robot_index].model_copy(
+            update={"status": "busy", "currentTask": "机械臂作业中"}
+        )
         dismissed = client.post(
             "/api/v1/bookarm/tasks/BT-TEST-1/dismiss-recovery", headers=headers
         )
@@ -465,6 +469,9 @@ def test_recovery_required_parks_task_and_dismiss_settles_it() -> None:
         assert settled is not None
         assert settled.status == "failed"
         assert "人工接管" in (settled.workflowMessage or "")
+        robot = next(item for item in store.robots if item.id == "LR-01")
+        assert robot.status == "idle"
+        assert robot.currentTask == "待命"
     finally:
         _cleanup(store)
 

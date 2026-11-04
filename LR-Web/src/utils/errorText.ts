@@ -13,6 +13,11 @@ type ErrorRule = { pattern: RegExp; text: string };
 // patterns and passes through untouched below.
 const RULES: ErrorRule[] = [
   {
+    pattern:
+      /book spine was not detected within|left-neighbor book spine or its offset depth was not detected within/i,
+    text: '未识别到目标书脊或有效深度：请确认书脊模板与图书一致、相机视野清晰无遮挡',
+  },
+  {
     pattern: /frame didn't arrive|d435|camera/i,
     text: '相机取帧失败：可能是 USB 接触不良，系统会自动重试恢复；持续失败请检查相机线缆',
   },

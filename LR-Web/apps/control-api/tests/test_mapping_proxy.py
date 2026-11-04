@@ -143,7 +143,11 @@ def test_mapping_jog_forwards_velocity_to_agent(monkeypatch) -> None:
     assert response.json() == {"ok": True}
     assert captured["url"] == "http://127.0.0.1:18090/mapping/jog"
     assert captured["method"] == "POST"
-    assert captured["body"] == {"linear": 0.2, "angular": -0.5}
+    assert captured["body"] == {
+        "linear": 0.2,
+        "angular": -0.5,
+        "controlMode": "differential",
+    }
 
 
 def test_mapping_jog_agent_conflict_is_passed_through(monkeypatch) -> None:

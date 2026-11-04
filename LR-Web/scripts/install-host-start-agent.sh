@@ -16,7 +16,7 @@ START_TARGET="/usr/local/libexec/lr-platform-start-all.sh"
 RESTART_SOURCE="$ROOT_DIR/scripts/restart-all.sh"
 RESTART_TARGET="/usr/local/libexec/lr-platform-restart-all.sh"
 SERVICE_PATH="/etc/systemd/system/lr-host-start-agent.service"
-BOOKARM_ALLOW_START="${LR_BOOKARM_ALLOW_START:-false}"
+BOOKARM_ALLOW_START="${LR_BOOKARM_ALLOW_START:-true}"
 SOCKET_DIR="/var/lib/lr-platform/host-start-agent"
 SOCKET_PATH="$SOCKET_DIR/start-all.sock"
 

@@ -12,9 +12,11 @@ from rclpy.node import Node
 from rcl_interfaces.msg import Parameter as ParameterMsg
 from rcl_interfaces.msg import ParameterType, ParameterValue
 from rcl_interfaces.srv import SetParameters
-from std_msgs.msg import Bool
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 
+from robot_decision.drive_control import ACKERMANN, DIFFERENTIAL
 from robot_decision.pose_utils import make_pose_stamped
 
 
@@ -41,6 +43,17 @@ class CruiseNode(Node):
             points_file
         )
         self.action_client = ActionClient(self, NavigateToPose, action_name)
+        self._control_mode = DIFFERENTIAL
+        self._control_mode_subscription = self.create_subscription(
+            String,
+            "/navigation/control_mode",
+            self._set_control_mode,
+            QoSProfile(
+                depth=1,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                reliability=ReliabilityPolicy.RELIABLE,
+            ),
+        )
         self.fine_tune_client = self.create_client(
             Trigger,
             self.fine_tune_config["start_service"],
@@ -223,6 +236,10 @@ class CruiseNode(Node):
         self._startup_timer.cancel()
         self._send_next_goal()
 
+    def _set_control_mode(self, message: String) -> None:
+        if message.data in {DIFFERENTIAL, ACKERMANN}:
+            self._control_mode = message.data
+
     def _send_next_goal(self) -> None:
         if self.current_index >= len(self.points):
             if self.loop:
@@ -237,6 +254,12 @@ class CruiseNode(Node):
 
         point = self.points[self.current_index]
         goal = NavigateToPose.Goal()
+        if self._control_mode == ACKERMANN:
+            goal.planner_id = "AckermannGridBased"
+            goal.controller_id = "AckermannFollowPath"
+        else:
+            goal.planner_id = "GridBased"
+            goal.controller_id = "FollowPath"
         goal.pose = make_pose_stamped(
             self,
             point["frame_id"],

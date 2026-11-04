@@ -190,6 +190,7 @@ def test_complete_takeout_happy_path_places_into_the_requested_slot() -> None:
         assert call["template_id"] == "LIB-TPL-1"
         assert call["target_height_mm"] == 800
         assert call["destination_slot"] == 1
+        assert call["enable_vehicle_alignment"] is True
 
         # The D435 spine-recognition snapshot is exposed and fetchable.
         images = final["workflowDetails"]["visionImages"]
@@ -483,6 +484,31 @@ def test_complete_takeout_without_navigation_starts_the_arm_in_place() -> None:
             if item.type in {"navigate", "fine_tune"} and item.target.startswith("取书")
         ]
         assert len(fake.created) == 1
+        assert fake.created[0]["enable_vehicle_alignment"] is False
+    finally:
+        _cleanup(store)
+
+
+def test_complete_takeout_mid_mode_is_forwarded_to_bookarm() -> None:
+    store = _store()
+    fake = FakeBookarmClient()
+    _prepare_robot()
+    headers = _headers()
+    store.bookarm_client_factory = lambda: fake
+    store.takeout_poll_interval_s = 0.01
+    try:
+        payload = _payload(sendNavigation=False, takeoutMode="mid")
+        del payload["target"]
+        created = client.post(
+            "/api/v1/circulation/complete-takeout", headers=headers, json=payload
+        )
+        assert created.status_code == 201
+        task = created.json()
+        assert task["workflowMode"] == "mid_takeout"
+        assert task["workflowDetails"]["takeoutMode"] == "mid"
+        final = _wait_task_status(task["id"], {"completed", "failed"})
+        assert final["status"] == "completed", final.get("failureReason")
+        assert fake.created[0]["takeout_mode"] == "mid"
     finally:
         _cleanup(store)
 

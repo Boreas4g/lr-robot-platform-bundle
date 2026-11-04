@@ -350,6 +350,7 @@ class ChassisParamsApiTests(unittest.TestCase):
                 "车辆与轮系",
                 "雷达与坐标变换",
                 "导航速度链",
+                "类阿克曼规划与控制",
                 "到位判定",
                 "速度平滑",
                 "碰撞监控",
@@ -364,6 +365,8 @@ class ChassisParamsApiTests(unittest.TestCase):
         self.assertEqual(params["chassis.max_rpm"]["value"], 330)
         self.assertEqual(params["amcl.max_particles"]["value"], 1500)
         self.assertAlmostEqual(params["nav.max_vel_x"]["value"], 0.30)
+        self.assertAlmostEqual(params["ackermann.minimum_turning_radius"]["value"], 1.0)
+        self.assertAlmostEqual(params["ackermann.desired_linear_vel"]["value"], 0.20)
         self.assertAlmostEqual(params["smoother.max_velocity.theta"]["value"], 0.8)
         self.assertAlmostEqual(params["tf.front.x"]["value"], 0.235)
         self.assertAlmostEqual(params["tf.back.yaw"]["value"], -2.3561944901)

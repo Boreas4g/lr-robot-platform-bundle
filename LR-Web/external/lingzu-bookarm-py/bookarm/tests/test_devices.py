@@ -1932,6 +1932,151 @@ class DeviceStackTests(unittest.TestCase):
             all(item[3] == command.kp and item[4] == command.kd for item in carry_frames)
         )
 
+    def _make_adaptive_carry(self, service):
+        target = math.radians(3.0)
+        carry = {
+            "target_rad": target,
+            "kp": 40.0,
+            "kd": 3.0,
+            "effort": 0.35,
+            "adaptive": True,
+            "close_direction": 1.0,
+            "reference_angle_rad": 0.0,
+            "base_target_rad": target,
+            "max_target_rad": target + math.radians(4.0),
+            "base_effort": 0.35,
+            "max_effort": 0.50,
+            "torque_floor_nm": 0.125,
+            "slip_angle_rad": math.radians(1.0),
+            "slip_since": None,
+            "lost_since": None,
+            "last_adjust_s": None,
+            "recovery_count": 0,
+            "last_opening_rad": 0.0,
+            "last_torque_nm": 0.50,
+        }
+        service._gripper_carry = carry
+        return carry
+
+    def test_adaptive_close_arms_persistent_carry(self):
+        transport = FakeArmTransport()
+        service = ArmService(ArmDeviceConfig(control_rate_hz=200.0), transport=transport)
+        command = GripperCommand(
+            close_deg=20.0,
+            close_speed_deg_s=720.0,
+            timeout_s=1.0,
+            monitor_period_s=0.01,
+            adaptive_carry=True,
+            carry_effort=0.35,
+        )
+        service.start()
+        try:
+            service.enable()
+            result = service.close_gripper_monitored(command)
+            status = service.gripper_carry_status()
+        finally:
+            service.close()
+
+        self.assertTrue(result["carry_hold"])
+        self.assertTrue(result["adaptive_carry"])
+        self.assertEqual(result["carry_effort"], 0.35)
+        self.assertEqual(result["carry_max_effort"], 0.50)
+        self.assertTrue(status["armed"])
+        self.assertTrue(status["adaptive"])
+        self.assertEqual(status["recovery_count"], 0)
+
+    def test_adaptive_carry_recovers_from_position_slip_with_bounds(self):
+        service = ArmService(ArmDeviceConfig(), transport=FakeArmTransport())
+        carry = self._make_adaptive_carry(service)
+        feedback = MotorFeedback(
+            7, math.radians(-1.2), 0.0, 0.50, 25.0, 0, time.time(), 2
+        )
+
+        service._update_adaptive_carry(carry, feedback, 100.0, False)
+        self.assertEqual(carry["recovery_count"], 0)
+        service._update_adaptive_carry(carry, feedback, 100.16, False)
+        self.assertEqual(carry["recovery_count"], 1)
+        self.assertAlmostEqual(carry["target_rad"], math.radians(4.0))
+        self.assertAlmostEqual(carry["effort"], 0.40)
+
+        for now_s in (100.37, 100.58, 100.79, 101.0, 101.21):
+            service._update_adaptive_carry(carry, feedback, now_s, False)
+        self.assertEqual(carry["recovery_count"], 5)
+        self.assertAlmostEqual(carry["target_rad"], math.radians(7.0))
+        self.assertAlmostEqual(carry["effort"], 0.50)
+
+    def test_adaptive_carry_detects_torque_drop_and_recovers(self):
+        service = ArmService(ArmDeviceConfig(), transport=FakeArmTransport())
+        carry = self._make_adaptive_carry(service)
+        torque_drop = MotorFeedback(7, 0.0, 0.0, 0.0, 25.0, 0, time.time(), 2)
+
+        service._update_adaptive_carry(carry, torque_drop, 100.0, False)
+        service._update_adaptive_carry(carry, torque_drop, 100.16, False)
+
+        self.assertEqual(carry["recovery_count"], 1)
+        self.assertAlmostEqual(carry["target_rad"], math.radians(4.0))
+        self.assertAlmostEqual(carry["effort"], 0.40)
+
+    def test_adaptive_carry_reports_book_loss_after_opening_and_torque_drop(self):
+        service = ArmService(ArmDeviceConfig(), transport=FakeArmTransport())
+        carry = self._make_adaptive_carry(service)
+        lost = MotorFeedback(
+            7, math.radians(-6.5), 0.0, 0.0, 25.0, 0, time.time(), 2
+        )
+        service._update_adaptive_carry(carry, lost, 100.0, False)
+        service._update_adaptive_carry(carry, lost, 100.16, False)
+
+        with self.assertRaisesRegex(RuntimeError, "gripper lost book"):
+            service._update_adaptive_carry(carry, lost, 100.31, False)
+
+    def test_adaptive_carry_does_not_increase_grip_while_derated(self):
+        service = ArmService(ArmDeviceConfig(), transport=FakeArmTransport())
+        carry = self._make_adaptive_carry(service)
+        slipping = MotorFeedback(
+            7, math.radians(-1.2), 0.0, 0.0, 62.0, 0, time.time(), 2
+        )
+
+        service._update_adaptive_carry(carry, slipping, 100.0, True)
+        service._update_adaptive_carry(carry, slipping, 100.31, True)
+
+        self.assertEqual(carry["recovery_count"], 0)
+        self.assertAlmostEqual(carry["target_rad"], math.radians(3.0))
+        self.assertAlmostEqual(carry["effort"], 0.35)
+
+    def test_adaptive_carry_thermal_fault_blocks_the_next_arm_motion(self):
+        transport = ThermalAwareTransport()
+        service = ArmService(
+            ArmDeviceConfig(
+                control_rate_hz=200.0,
+                gravity_feedforward_ratio=0.0,
+                thermal_check_interval_s=0.05,
+                gripper_thermal_limit_c=70.0,
+            ),
+            transport=transport,
+        )
+        command = GripperCommand(
+            close_deg=20.0,
+            close_speed_deg_s=720.0,
+            timeout_s=1.0,
+            monitor_period_s=0.01,
+            adaptive_carry=True,
+            carry_effort=0.35,
+        )
+        service.start()
+        try:
+            service.enable()
+            service.close_gripper_monitored(command)
+            transport.set_temperature(7, 72.0)
+            deadline = time.time() + 2.0
+            while service._control_error is None and time.time() < deadline:
+                time.sleep(0.02)
+            self.assertIsNotNone(service._control_error)
+            self.assertIn("gripper", service._control_error)
+            with self.assertRaises(RuntimeError):
+                service.move_j(ZERO_JOINT, 0.05)
+        finally:
+            service.close()
+
     def test_gripper_open_and_disable_clear_the_carry_hold(self):
         transport = StalledGripperTransport()
         service = ArmService(
@@ -2052,6 +2197,7 @@ class DeviceStackTests(unittest.TestCase):
         command = GripperCommand(
             close_deg=20.0,
             close_speed_deg_s=10.0,
+            command_lead_s=1.05,
             timeout_s=10.0,
             close_timeout_margin_s=1.5,
         )
@@ -2370,6 +2516,46 @@ class DeviceStackTests(unittest.TestCase):
 
         self.assertEqual(frame.point_at_pixel(0, 0, search_radius=1), (0.0, 0.0, 2.0))
         self.assertEqual(frame.point_cloud(max_depth_m=2.0).shape, (1, 3))
+
+    def test_d435_resolves_configured_asic_serial_to_sdk_serial(self):
+        from types import SimpleNamespace
+
+        class FakeDevice:
+            def supports(self, info):
+                return info == "asic_serial"
+
+            def get_info(self, info):
+                return {"serial": "262522074558", "asic_serial": "343223025861"}[info]
+
+        rs = SimpleNamespace(
+            camera_info=SimpleNamespace(serial_number="serial", asic_serial_number="asic_serial"),
+            context=lambda: SimpleNamespace(query_devices=lambda: [FakeDevice()]),
+        )
+
+        self.assertEqual(
+            D435Device._resolve_device_serial(rs, "343223025861"),
+            "262522074558",
+        )
+
+    def test_d435_keeps_sdk_serial_when_configured_serial_already_matches(self):
+        from types import SimpleNamespace
+
+        class FakeDevice:
+            def supports(self, info):
+                return False
+
+            def get_info(self, info):
+                return "262522074558"
+
+        rs = SimpleNamespace(
+            camera_info=SimpleNamespace(serial_number="serial", asic_serial_number="asic_serial"),
+            context=lambda: SimpleNamespace(query_devices=lambda: [FakeDevice()]),
+        )
+
+        self.assertEqual(
+            D435Device._resolve_device_serial(rs, "262522074558"),
+            "262522074558",
+        )
 
     def test_d435_frame_escalates_search_radius_past_depth_hole(self):
         import numpy as np

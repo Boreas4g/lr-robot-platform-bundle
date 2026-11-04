@@ -1174,6 +1174,48 @@ def test_fine_tune_dispatches_target_and_completes_with_actual_pose(monkeypatch)
     ]
 
 
+def test_shelf_move_dispatches_x_only_mode() -> None:
+    node, events = _fine_tune_gateway_node()
+    parameter_requests = []
+    node._book_shelf_fine_tune_parameter_client = SimpleNamespace(
+        wait_for_service=lambda timeout_sec: True,
+        call_async=lambda request: parameter_requests.append(request)
+        or _ImmediateFuture(SimpleNamespace(results=[SimpleNamespace(successful=True, reason="")])),
+    )
+    node._book_shelf_fine_tune_start_client = SimpleNamespace(
+        wait_for_service=lambda timeout_sec: True,
+        call_async=lambda _request: _ImmediateFuture(
+            SimpleNamespace(success=True, message="shelf move complete: x=0.010")
+        ),
+    )
+    command = GatewayCommand(
+        "CMD-SHELF-MOVE",
+        "LR-01",
+        "shelf_move",
+        {"x": 0.5, "y": 0.5, "yaw": 0.0, "speedMps": 0.08},
+        datetime.now(UTC) + timedelta(minutes=1),
+    )
+
+    node._start_fine_tune(command)
+
+    parameters = {parameter.name: parameter.value for parameter in parameter_requests[0].parameters}
+    assert parameters["x_only"].bool_value is True
+    assert parameters["shelf_move_speed_mps"].double_value == pytest.approx(0.08)
+    assert events[0] == (
+        "shelf_move_dispatching",
+        command,
+        {
+            "mapId": "MAP-01",
+            "targetX": 0.5,
+            "targetY": 0.5,
+            "targetYaw": 0.0,
+            "xOnly": True,
+            "speedMps": 0.08,
+        },
+    )
+    assert events[-1][0] == "command_completed"
+
+
 def test_fine_tune_failure_forwards_the_service_reason() -> None:
     node, events = _fine_tune_gateway_node()
     node._book_shelf_fine_tune_parameter_client = SimpleNamespace(
@@ -1404,3 +1446,16 @@ def test_bare_cancel_keeps_legacy_broad_behavior() -> None:
 
     assert goal_handle.cancelled is True
     assert ("navigation_cancelling", cancel, None) in events
+
+
+def test_navigation_backend_selection_preserves_both_plugins() -> None:
+    differential_goal = SimpleNamespace()
+    ackermann_goal = SimpleNamespace()
+
+    EdgeGatewayNode._select_navigation_backend(differential_goal, "differential")
+    EdgeGatewayNode._select_navigation_backend(ackermann_goal, "ackermann")
+
+    assert differential_goal.planner_id == "GridBased"
+    assert differential_goal.controller_id == "FollowPath"
+    assert ackermann_goal.planner_id == "AckermannGridBased"
+    assert ackermann_goal.controller_id == "AckermannFollowPath"

@@ -66,6 +66,7 @@ import type {
   Book,
   DispatchTask,
   RobotSummary,
+  TakeoutMode,
 } from '@/services/libraryRobot/types';
 import { errorMessage } from '@/utils/errorText';
 
@@ -185,6 +186,7 @@ type LoopConfig = {
   robotId: string;
   takeouts: TakeoutAction[];
   returns: ReturnAction[];
+  takeoutMode: TakeoutMode;
   liftSpeedLevel: number;
 };
 
@@ -266,6 +268,7 @@ export default function StressTestPage() {
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [saveTemplateName, setSaveTemplateName] = useState('');
   const [templateSaving, setTemplateSaving] = useState(false);
+  const [takeoutMode, setTakeoutMode] = useState<TakeoutMode>('standard');
   const [liftSpeedLevel, setLiftSpeedLevel] = useState<number>(3);
 
   const [running, setRunning] = useState(false);
@@ -479,6 +482,7 @@ export default function StressTestPage() {
       robotId,
       takeouts: actions.takeouts,
       returns: actions.returns,
+      takeoutMode,
       liftSpeedLevel,
     };
   }
@@ -496,6 +500,7 @@ export default function StressTestPage() {
         sourceSlot: action.sourceSlot,
         referenceBookId: action.referenceBook.id,
       })),
+      takeoutMode,
       liftSpeedLevel,
     };
   }
@@ -574,6 +579,7 @@ export default function StressTestPage() {
     }
     setTakeoutRows(takeoutRowsNext);
     setReturnRows(returnRowsNext);
+    setTakeoutMode(config.takeoutMode ?? 'standard');
     setLiftSpeedLevel(config.liftSpeedLevel);
     setSelectedTemplateId(template.id);
     message.success(`已应用模板「${template.name}」，确认无误后点开始压测`);
@@ -686,6 +692,7 @@ export default function StressTestPage() {
             bookId: takeout.book.id,
             liftHeightMm: takeout.liftHeightMm,
             destinationSlot: takeout.destinationSlot,
+            takeoutMode: config.takeoutMode,
             liftSpeedLevel: config.liftSpeedLevel,
             sendNavigation: false,
           }),
@@ -1084,6 +1091,22 @@ export default function StressTestPage() {
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   还书书格须是某个取书动作的目标槽位；目标书须留在架上，不能是该槽取入的书。
                 </Typography.Text>
+              </div>
+              <div>
+                <Typography.Text type="secondary">取书模式</Typography.Text>
+                <Radio.Group
+                  style={{ display: 'flex' }}
+                  value={takeoutMode}
+                  onChange={(event) =>
+                    setTakeoutMode(event.target.value as TakeoutMode)
+                  }
+                  options={[
+                    { value: 'standard', label: '普通取书' },
+                    { value: 'mid', label: '中位取书' },
+                  ]}
+                  optionType="button"
+                  disabled={running}
+                />
               </div>
               <div>
                 <Typography.Text type="secondary">升降速度档位</Typography.Text>

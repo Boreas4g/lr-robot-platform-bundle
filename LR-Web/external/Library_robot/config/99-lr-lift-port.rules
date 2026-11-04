@@ -1,0 +1,5 @@
+# Lift adapter identified 2026-10-29 by successful AIM position register reads
+# at address 1 / 19200 baud. USB revision 0264 distinguishes it from the IMU's
+# CH340 revision 8233 across USB socket changes. This is not a unique serial;
+# recheck before adding another CH340 adapter with the same revision.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", ATTRS{bcdDevice}=="0264", GROUP="dialout", MODE="0660", SYMLINK+="lift_port"

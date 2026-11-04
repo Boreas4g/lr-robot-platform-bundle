@@ -8,6 +8,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
+from bookarm.application.post_vision import take_book_grasp_poses
 from bookarm.application.use_cases.mid_return import (
     PRE_INSERT_X_SEARCH_START_M,
     PRE_INSERT_X_SEARCH_STEP_M,
@@ -15,9 +16,11 @@ from bookarm.application.use_cases.mid_return import (
     search_pre_insert_x,
 )
 from bookarm.devices.arm.service import ArmDeviceConfig, ArmService
+from bookarm.domain.models.book import BookTarget
 from bookarm.domain.models.pose import BasePose, JointPose
 from bookarm.domain.plans.mid_return import MidReturnMotionPlan
 from bookarm.domain.plans.return_book import ReturnBookMotionPlan
+from bookarm.domain.plans.take_book import TakeBookMotionPlan
 
 
 class ScriptedArm:
@@ -90,15 +93,59 @@ class SearchLogicTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "requires the arm"):
             insert_chain_poses(self.plan, BasePose(-0.35, -0.03, 0.25, 0.0, 0.0, 0.0))
 
-    def test_mid_return_keeps_its_pinned_x_and_never_searches(self):
-        insert_target = BasePose(-0.35, -0.03, 0.25, 0.0, 0.0, 0.0)
+    def test_mid_return_searches_x_again_for_each_fresh_insert_target(self):
+        plan = replace(
+            MidReturnMotionPlan(),
+            pre_insert_y_offset_cm=1.0,
+            pre_insert_z_offset_cm=3.0,
+        )
+        arm = ScriptedArm(reachable_from_x_m=-0.36)
 
-        poses = insert_chain_poses(MidReturnMotionPlan(), insert_target)
+        first = insert_chain_poses(
+            plan, BasePose(-0.35, -0.03, 0.25, 0.0, 0.0, 0.0), arm
+        )
+        second = insert_chain_poses(
+            plan, BasePose(-0.42, -0.01, 0.28, 0.0, 0.0, 0.0), arm
+        )
 
-        self.assertEqual(poses["pre_insert"].x_m, -0.33)
-        self.assertAlmostEqual(poses["pre_insert"].y_m, -0.03)
-        self.assertAlmostEqual(poses["pre_insert"].z_m, 0.25)
-        self.assertAlmostEqual(poses["pre_insert"].rx_rad, math.radians(95.0))
+        self.assertEqual(first["pre_insert"].x_m, -0.36)
+        self.assertEqual(second["pre_insert"].x_m, -0.36)
+        self.assertAlmostEqual(first["pre_insert"].y_m, -0.02)
+        self.assertAlmostEqual(first["pre_insert"].z_m, 0.28)
+        self.assertAlmostEqual(second["pre_insert"].y_m, 0.0)
+        self.assertAlmostEqual(second["pre_insert"].z_m, 0.31)
+        self.assertEqual(
+            [label for label, _pose, _seed in arm.probes],
+            ["pre_insert_x_search"] * 8,
+        )
+        self.assertAlmostEqual(arm.probes[-1][1].y_m, 0.0)
+        self.assertAlmostEqual(arm.probes[-1][1].z_m, 0.31)
+
+    def test_take_post_grasp_searches_max_x_from_the_current_round_cap(self):
+        pose = BasePose(0.21, 0.10, 0.30, 0.0, 0.0, 0.0)
+        target = BookTarget(
+            raw_pose=pose,
+            grasp_pose=pose,
+            pixel_uv=(320, 240),
+            confidence=0.9,
+        )
+        plan = replace(
+            TakeBookMotionPlan(),
+            post_grasp_offset_cm=(15.0, 2.0, 8.0),
+        )
+        arm = ScriptedArm(reachable_from_x_m=0.29)
+
+        poses = take_book_grasp_poses(target, plan, arm.check_pose_reachable)
+
+        self.assertAlmostEqual(poses["arm_post_grasp"].x_m, 0.29)
+        self.assertAlmostEqual(poses["arm_post_grasp"].y_m, 0.135)
+        self.assertAlmostEqual(poses["arm_post_grasp"].z_m, 0.38)
+        self.assertAlmostEqual(arm.probes[0][1].x_m, 0.37)
+        self.assertAlmostEqual(arm.probes[-1][1].x_m, 0.29)
+        self.assertEqual(
+            [label for label, _pose, _seed in arm.probes],
+            ["arm_post_grasp_x_search"] * 9,
+        )
 
 
 class RealKinematicsSearchTests(unittest.TestCase):

@@ -38,13 +38,17 @@ class BookarmClient:
         target_height_mm: float,
         destination_slot: int,
         lift_speed_level: int,
+        enable_vehicle_alignment: bool = True,
         book_id: str | None = None,
+        takeout_mode: str = "standard",
     ) -> dict[str, Any]:
         fields = {
             "template_id": template_id,
             "target_height_mm": str(target_height_mm),
             "destination_slot": str(destination_slot),
             "lift_speed_level": str(lift_speed_level),
+            "enable_vehicle_alignment": str(enable_vehicle_alignment).lower(),
+            "takeout_mode": takeout_mode,
         }
         if book_id:
             fields["book_id"] = book_id
@@ -63,6 +67,7 @@ class BookarmClient:
         target_height_mm: float,
         source_slot: int,
         lift_speed_level: int,
+        enable_vehicle_alignment: bool = True,
         book_id: str | None = None,
         injected_grasp_pose: list[float] | None = None,
     ) -> dict[str, Any]:
@@ -71,6 +76,7 @@ class BookarmClient:
             "target_height_mm": str(target_height_mm),
             "source_slot": str(source_slot),
             "lift_speed_level": str(lift_speed_level),
+            "enable_vehicle_alignment": str(enable_vehicle_alignment).lower(),
         }
         if book_id:
             fields["book_id"] = book_id
@@ -209,11 +215,18 @@ class BookarmClient:
         return self._post_json(
             "/api/v1/studio/lift/move",
             {"height_mm": height_mm, "speed_level": speed_level},
+            timeout_s=55.0,
         )
 
-    def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _post_json(
+        self, path: str, payload: dict[str, Any], timeout_s: float | None = None
+    ) -> dict[str, Any]:
         return self._request(
-            "POST", path, json.dumps(payload).encode("utf-8"), "application/json"
+            "POST",
+            path,
+            json.dumps(payload).encode("utf-8"),
+            "application/json",
+            timeout_s=timeout_s,
         )
 
     def _post_task_form(self, path: str, fields: dict[str, str]) -> dict[str, Any]:
@@ -239,8 +252,11 @@ class BookarmClient:
         path: str,
         body: bytes | None,
         content_type: str | None,
+        timeout_s: float | None = None,
     ) -> dict[str, Any]:
-        status, response_body = self._roundtrip(method, path, body, content_type)
+        status, response_body = self._roundtrip(
+            method, path, body, content_type, timeout_s=timeout_s
+        )
 
         try:
             document = json.loads(response_body.decode("utf-8")) if response_body else {}
@@ -265,6 +281,7 @@ class BookarmClient:
         path: str,
         body: bytes | None,
         content_type: str | None,
+        timeout_s: float | None = None,
     ) -> tuple[int, bytes]:
         """One short-lived unix-socket HTTP exchange; returns (status, body)."""
         headers = [f"{method} {path} HTTP/1.1", "Host: bookarm.local", "Connection: close"]
@@ -278,7 +295,7 @@ class BookarmClient:
 
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-                connection.settimeout(self._timeout_s)
+                connection.settimeout(self._timeout_s if timeout_s is None else timeout_s)
                 connection.connect(self._socket_path)
                 connection.sendall(wire)
                 chunks: list[bytes] = []

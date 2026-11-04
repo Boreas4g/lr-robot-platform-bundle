@@ -230,6 +230,8 @@ class Runner:
 
     def _policy(self):
         data = self.json("GET", "/system/bookarm-start-policy").json()
+        if data.get("allow") is not True:
+            raise SmokeFailure("managed BookArm startup is not enabled")
         return f"allow={data.get('allow')}"
 
     def _mqtt_command(self):

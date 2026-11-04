@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence, Tuple
 
 from bookarm.devices.rod.service import RodMotorService
 from bookarm.domain.models.pose import JointPose
 from bookarm.domain.plans.mid_return import MidReturnMotionPlan
+from bookarm.domain.plans.mid_takeout import MidTakeoutMotionPlan
 from bookarm.domain.plans.return_book import ReturnBookMotionPlan
 from bookarm.domain.plans.speed import (
     DEFAULT_SPEED_LEVEL,
@@ -120,14 +122,20 @@ def load_take_book_motion_plan(path: Path) -> TakeBookMotionPlan:
     return apply_speed_level(TakeBookMotionPlan(**values))
 
 
-def load_mid_return_motion_plan(path: Path) -> MidReturnMotionPlan:
-    """Load a mid-return plan and reject unknown or malformed fields."""
-
-    source = _read_json(path, "mid-return profile")
+def _mid_plan_values(
+    source: Mapping[str, Any], defaults: MidReturnMotionPlan
+) -> dict[str, Any]:
+    source = dict(source)
     gripper_value = source.get("gripper", {})
     if not isinstance(gripper_value, Mapping):
         raise ValueError("mid-return profile gripper must be an object")
-    defaults = MidReturnMotionPlan()
+    legacy_pre_insert_x = source.pop("pre_insert_x_m", None)
+    if legacy_pre_insert_x is not None and "pre_insert_x_max_m" not in source:
+        source["pre_insert_x_max_m"] = legacy_pre_insert_x
+    legacy_forward_cm = source.pop("pickup_light_close_forward_cm", None)
+    if legacy_forward_cm is not None and "pickup_light_close_down_cm" not in source:
+        source["pickup_light_close_down_cm"] = legacy_forward_cm
+    source.pop("pickup_raise_z_offset_cm", None)
     unexpected = set(source.keys()) - set(defaults.__dataclass_fields__.keys())
     if unexpected:
         raise ValueError(
@@ -167,10 +175,12 @@ def load_mid_return_motion_plan(path: Path) -> MidReturnMotionPlan:
     values["rod_insert_deg"] = _rod_angle(
         source.get("rod_insert_deg", defaults.rod_insert_deg), "rod_insert_deg"
     )
-    pre_insert_x_m = float(source.get("pre_insert_x_m", defaults.pre_insert_x_m))
-    if not math.isfinite(pre_insert_x_m) or not -1.0 <= pre_insert_x_m <= 0.5:
-        raise ValueError("pre_insert_x_m must be between -1.0 and 0.5 metres")
-    values["pre_insert_x_m"] = pre_insert_x_m
+    pre_insert_x_max_m = float(
+        source.get("pre_insert_x_max_m", defaults.pre_insert_x_max_m)
+    )
+    if not math.isfinite(pre_insert_x_max_m) or not -0.80 <= pre_insert_x_max_m <= -0.01:
+        raise ValueError("pre_insert_x_max_m must be between -0.80 and -0.01 metres")
+    values["pre_insert_x_max_m"] = pre_insert_x_max_m
     for name in ("pre_insert_y_offset_cm", "pre_insert_z_offset_cm"):
         offset = float(source.get(name, getattr(defaults, name)))
         if not math.isfinite(offset) or abs(offset) > 50.0:
@@ -182,13 +192,44 @@ def load_mid_return_motion_plan(path: Path) -> MidReturnMotionPlan:
     if not math.isfinite(target_y_offset_cm) or abs(target_y_offset_cm) > 50.0:
         raise ValueError("target_y_offset_cm must be within +/-50.0 cm")
     values["target_y_offset_cm"] = target_y_offset_cm
-    values["gripper"] = GripperCommand(**dict(gripper_value))
+    values["gripper"] = replace(defaults.gripper, **dict(gripper_value))
     values["speed_level"] = validate_speed_level(
         source.get("speed_level", DEFAULT_SPEED_LEVEL)
     )
     _validate_post_vision_fields(values)
+    return values
+
+
+def load_mid_return_motion_plan(path: Path) -> MidReturnMotionPlan:
+    """Load a mid-return plan and reject unknown or malformed fields."""
+
+    values = _mid_plan_values(
+        dict(_read_json(path, "mid-return profile")), MidReturnMotionPlan()
+    )
     return apply_speed_level(MidReturnMotionPlan(**values))
 
+
+def load_mid_takeout_motion_plan(path: Path) -> MidTakeoutMotionPlan:
+    """Load the independent mid-takeout plan and its post-grasp fields."""
+
+    defaults = MidTakeoutMotionPlan()
+    values = _mid_plan_values(
+        dict(_read_json(path, "mid-takeout profile")), defaults
+    )
+    if "lower_offset_cm" not in values:
+        values["lower_offset_cm"] = (
+            0.0,
+            0.0,
+            values.get("lower_z_offset_cm", defaults.lower_offset_cm[2]),
+        )
+    for name in (
+        "lower_offset_cm",
+        "lower_rpy_offset_deg",
+        "post_grasp_offset_cm",
+        "post_grasp_rpy_offset_deg",
+    ):
+        values[name] = _triple(values.get(name, getattr(defaults, name)), name)
+    return apply_speed_level(MidTakeoutMotionPlan(**values))
 
 
 def _validate_post_vision_fields(values: Mapping[str, Any]) -> None:

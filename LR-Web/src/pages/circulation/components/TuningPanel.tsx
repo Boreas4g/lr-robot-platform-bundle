@@ -243,11 +243,22 @@ const SLOT_POSE_FIELDS: Record<BookStandGroup, SlotPoseField[]> = {
     { key: 'grasp', label: '抓取', durationKey: 'grasp_duration_s' },
     { key: null, label: '撤回（仅时长）', durationKey: 'retreat_duration_s' },
   ],
+  midtakeout_place: [
+    { key: 'pre_place', label: '预放置', durationKey: 'pre_place_duration_s' },
+    { key: 'place', label: '放置', durationKey: 'place_duration_s' },
+    {
+      key: 'lower_place',
+      label: '下放',
+      durationKey: 'lower_place_duration_s',
+    },
+    { key: 'retreat', label: '撤回', durationKey: 'retreat_duration_s' },
+  ],
 };
 
 const SLOT_GROUP_TITLES: Record<BookStandGroup, string> = {
   place: '书立放置槽位（book_stand_slots.json）',
   preplace: '书立取回槽位（book_stand_pickup_slots.json）',
+  midtakeout_place: '中位取书放置槽位（midtakeout_book_stand_slots.json）',
 };
 
 const SLOT_COMPONENTS: { label: string; angle: boolean }[] = [
@@ -321,8 +332,13 @@ export default function TuningPanel({
 
   editRef.current = { profile, draft };
   slotsEditRef.current = { applied: slotsApplied, draft: slotsDraft };
-  /** Take places books into the stand; return/mid-return pick up from it. */
-  const slotsGroup: BookStandGroup = kind === 'take' ? 'place' : 'preplace';
+  /** Take flows place books; return flows pick up from the stand. */
+  const slotsGroup: BookStandGroup =
+    kind === 'take'
+      ? 'place'
+      : kind === 'midtakeout'
+        ? 'midtakeout_place'
+        : 'preplace';
 
   const refreshPreview = async () => {
     try {

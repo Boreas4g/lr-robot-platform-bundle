@@ -26,10 +26,12 @@ from ..schemas import (
     DispatchTask,
     MapAnnotation,
     MapAnnotationResult,
+    MapEditRequest,
     MapImportRequest,
     MapImportResult,
     MapVersion,
     MultiRoundRequest,
+    ShelfInternalRequest,
     StressTestTemplate,
     StressTestTemplateUpsert,
     TaskStatus,
@@ -377,6 +379,36 @@ def export_library(_: User = Depends(get_current_user)) -> JSONResponse:
 
 
 @router.post(
+    "/circulation/shelf-internal",
+    response_model=DispatchTask,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_shelf_internal(
+    request: ShelfInternalRequest, user: User = Depends(get_current_user)
+) -> DispatchTask:
+    try:
+        return store.create_shelf_internal_task(request, user)
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@router.post(
+    "/circulation/shelf-internal/{task_id}/cancel",
+    response_model=DispatchTask,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def cancel_shelf_internal(task_id: str, user: User = Depends(get_current_user)) -> DispatchTask:
+    try:
+        return store.cancel_shelf_internal(task_id, user)
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@router.post(
     "/circulation/multi-round",
     response_model=DispatchTask,
     status_code=status.HTTP_201_CREATED,
@@ -461,6 +493,20 @@ def import_map(request: MapImportRequest, user: User = Depends(get_current_user)
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
     # 单机交付：入库后顺带把地图注册进本机车端地图库；失败不阻断入库，
     # 由响应里的 vehicleRegistered/vehicleRegisterNote 告知操作员。
+    registered, note = register_imported_map(
+        map_version, store.map_storage_dir, enabled=settings.vehicle_map_register_enabled
+    )
+    return MapImportResult(
+        **map_version.model_dump(), vehicleRegistered=registered, vehicleRegisterNote=note
+    )
+
+
+@router.post("/library/maps/{map_id}/edit", response_model=MapImportResult, status_code=status.HTTP_201_CREATED)
+def edit_map(map_id: str, request: MapEditRequest, user: User = Depends(get_current_user)) -> MapImportResult:
+    try:
+        map_version = store.edit_map(map_id, request, user)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
     registered, note = register_imported_map(
         map_version, store.map_storage_dir, enabled=settings.vehicle_map_register_enabled
     )

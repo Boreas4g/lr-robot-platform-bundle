@@ -5,6 +5,7 @@ import TuningPanel, {
   type TuningStepDef,
 } from '../../circulation/components/TuningPanel';
 import { midreturnSteps } from './midreturnSteps';
+import { midtakeoutSteps } from './midtakeoutSteps';
 import { returnSteps } from './returnSteps';
 import { takeSteps } from './takeSteps';
 
@@ -22,6 +23,13 @@ const FLOWS: Record<TuningKind, TuningFlow> = {
     pageContent:
       '调整取书运动计划参数，并按步骤单步执行验证；保存后立即热生效并持久化到机器人本机服务配置文件。',
     steps: takeSteps,
+  },
+  midtakeout: {
+    tab: '中位取书',
+    pageTitle: '中位取书调参',
+    pageContent:
+      '沿用中位还书前 12 步抓出并下放目标书，完全闭合后接普通取书的抓取后撤、回调试位和书立放置链；运动参数与书立放置槽位均独立保存并热生效。',
+    steps: midtakeoutSteps,
   },
   return: {
     tab: '末尾还书',

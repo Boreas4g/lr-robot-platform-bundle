@@ -75,6 +75,7 @@ import {
   pollTasks,
   previewCruiseSync,
   sendManualJog,
+  setNavigationControlMode,
   setRobotInitialPose,
   subscribeRobotRealtime,
   switchRobotMap,
@@ -368,6 +369,48 @@ export default function LibraryMapPage() {
     void refreshMaps();
   }, []);
 
+  // 刷新后仍恢复未结束的标注导航，包括父流程已结束但子阶段残留的卡片。
+  useEffect(() => {
+    let stopped = false;
+    async function restoreAnnotationNavigation() {
+      try {
+        const tasks = await pollTasks();
+        if (stopped) return;
+        const activeIds = new Set(
+          tasks
+            .filter((task) =>
+              ['queued', 'running', 'paused'].includes(task.status),
+            )
+            .map((task) => task.id),
+        );
+        const parent = tasks.find(
+          (task) =>
+            task.type === 'navigate' &&
+            task.workflowDetails?.annotationNavigation === true &&
+            (activeIds.has(task.id) ||
+              activeIds.has(task.workflowDetails.navigationTaskId ?? '') ||
+              activeIds.has(task.workflowDetails.fineTuneTaskId ?? '')),
+        );
+        if (!parent) return;
+        setNavFlowTask(parent);
+        setNavFlowStages({
+          navigation: tasks.find(
+            (task) => task.id === parent.workflowDetails?.navigationTaskId,
+          ),
+          fineTune: tasks.find(
+            (task) => task.id === parent.workflowDetails?.fineTuneTaskId,
+          ),
+        });
+      } catch {
+        // 地图页仍可使用，恢复失败时沿用后续导航轮询。
+      }
+    }
+    void restoreAnnotationNavigation();
+    return () => {
+      stopped = true;
+    };
+  }, []);
+
   useEffect(() => {
     async function refreshRobots() {
       try {
@@ -647,11 +690,24 @@ export default function LibraryMapPage() {
     }
   }
 
-  // 标注导航编排的实时进度：父任务未结束时每 2 秒轮询一次任务列表，
+  // 标注导航编排的实时进度：父任务或任一阶段未结束时每 2 秒轮询一次任务列表，
   // 同步父任务（阶段文案/进度）与导航、精调两条阶段指令的状态。
+  const navFlowStageActive = [
+    navFlowStages.navigation,
+    navFlowStages.fineTune,
+  ].some(
+    (stage) =>
+      stage !== undefined &&
+      ['queued', 'running', 'paused'].includes(stage.status),
+  );
   const navFlowActive =
     navFlowTask !== undefined &&
-    !['completed', 'failed', 'cancelled'].includes(navFlowTask.status);
+    (!['completed', 'failed', 'cancelled'].includes(navFlowTask.status) ||
+      navFlowStageActive);
+  const navFlowCanStop =
+    navFlowTask !== undefined &&
+    (['queued', 'running', 'paused'].includes(navFlowTask.status) ||
+      navFlowStageActive);
   useEffect(() => {
     if (!navFlowActive || !navFlowTask) return;
     const taskId = navFlowTask.id;
@@ -700,6 +756,30 @@ export default function LibraryMapPage() {
   >(undefined);
   const driveTimerRef = useRef<number | undefined>(undefined);
   const [driveActive, setDriveActive] = useState<string>();
+  const [controlModeSaving, setControlModeSaving] = useState(false);
+
+  async function changeDriveControlMode(mode: 'differential' | 'ackermann') {
+    if (!driveRobot) return;
+    stopDrive();
+    setControlModeSaving(true);
+    try {
+      const updated = await setNavigationControlMode(driveRobot.id, mode);
+      setRobots((current) =>
+        current.map((robot) => (robot.id === updated.id ? updated : robot)),
+      );
+      message.success(
+        mode === 'ackermann'
+          ? '已切换为类阿克曼模式，导航与手动转向最小半径为 1 m。'
+          : '已切换为差速模式。',
+      );
+    } catch (error) {
+      message.error(
+        error instanceof Error ? error.message : '切换控制模式失败。',
+      );
+    } finally {
+      setControlModeSaving(false);
+    }
+  }
 
   function sendDriveVelocity(
     direction: { linear: number; angular: number },
@@ -1243,6 +1323,30 @@ export default function LibraryMapPage() {
               </Typography.Text>
             ) : (
               <>
+                <div style={{ marginBottom: 12 }}>
+                  <Typography.Text type="secondary">
+                    导航与控制方式：
+                  </Typography.Text>
+                  <Select
+                    style={{ width: '100%', marginTop: 4 }}
+                    value={driveRobot.navigationControlMode ?? 'differential'}
+                    loading={controlModeSaving}
+                    disabled={controlModeSaving || Boolean(driveActive)}
+                    onChange={(mode: 'differential' | 'ackermann') =>
+                      void changeDriveControlMode(mode)
+                    }
+                    options={[
+                      {
+                        value: 'differential',
+                        label: '差速（Smac 2D + DWB）',
+                      },
+                      {
+                        value: 'ackermann',
+                        label: '类阿克曼（Hybrid + RPP，半径 1 m）',
+                      },
+                    ]}
+                  />
+                </div>
                 <Typography.Paragraph
                   type="secondary"
                   style={{ marginBottom: 12 }}
@@ -1549,7 +1653,7 @@ export default function LibraryMapPage() {
             <NavFlowProgress
               onClose={() => setNavFlowTask(undefined)}
               onStop={
-                ['queued', 'running', 'paused'].includes(navFlowTask.status)
+                navFlowCanStop
                   ? () => void stopAnnotationNavigation()
                   : undefined
               }

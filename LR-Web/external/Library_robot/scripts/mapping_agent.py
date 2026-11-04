@@ -11,7 +11,9 @@
   POST /mapping/start         停 lr-robot-runtime，起 lr-robot-mapping（幂等）；
                               成功切换时开启新会话：清空书架标注与保存缓存
   POST /mapping/stop          停 lr-robot-mapping，起 lr-robot-runtime（幂等）
-  POST /mapping/jog           {"linear": x, "angular": z}，钳制 ±0.3 m/s、±0.8 rad/s
+  POST /mapping/jog           {"linear": x, "angular": z, "controlMode": 可选}，
+                              钳制 ±0.3 m/s、±0.8 rad/s；ackermann 模式按 1m 最小
+                              半径约束圆弧，缺省 differential 保持原差速行为；
                               后以 20Hz 持续发布 /cmd_vel；输出经加速度斜坡
                               （线 0.5 m/s²、角 1.5 rad/s²）防打滑；0.6s 无新 jog
                               立即零速（看门狗，不走斜坡）；仅建图模式可用，否则 409
@@ -110,6 +112,8 @@ try:
 except ImportError as error:  # ROS 环境未 source 时直接失败，由 systemd 重启
     print(f"mapping_agent: 无法导入 rclpy（ROS 环境未 source？）: {error}", file=sys.stderr)
     raise SystemExit(1)
+
+from robot_decision.drive_control import ACKERMANN, DIFFERENTIAL, constrain_ackermann_velocity
 
 RUNTIME_UNIT = "lr-robot-runtime.service"
 MAPPING_UNIT = "lr-robot-mapping.service"
@@ -445,6 +449,7 @@ class RosInterface:
         self._lock = threading.Lock()
         self._jog_linear = 0.0
         self._jog_angular = 0.0
+        self._control_mode = DIFFERENTIAL
         self._jog_last_at = 0.0  # time.monotonic()；0 表示从未收到 jog
         self._out_linear = 0.0  # 斜坡后的实际输出速度
         self._out_angular = 0.0
@@ -547,8 +552,11 @@ class RosInterface:
         with self._lock:
             self._mode_cache = mode
 
-    def set_jog(self, linear: float, angular: float) -> None:
+    def set_jog(self, linear: float, angular: float, control_mode: str = DIFFERENTIAL) -> None:
         with self._lock:
+            self._control_mode = control_mode
+            if control_mode == ACKERMANN:
+                linear, angular = constrain_ackermann_velocity(linear, angular)
             self._jog_linear = linear
             self._jog_angular = angular
             self._jog_last_at = time.monotonic()
@@ -861,6 +869,13 @@ def _finite_float(body: dict, key: str) -> float:
     return value
 
 
+def _control_mode(body: dict) -> str:
+    mode = body.get("controlMode", DIFFERENTIAL)
+    if mode not in {DIFFERENTIAL, ACKERMANN}:
+        raise AgentError(400, "controlMode 必须是 differential 或 ackermann")
+    return mode
+
+
 class MappingAgentHandler(BaseHTTPRequestHandler):
     server_version = "LRMappingAgent/1.0"
 
@@ -991,7 +1006,7 @@ class MappingAgentHandler(BaseHTTPRequestHandler):
         body = self._read_json()
         linear = _clamp(_finite_float(body, "linear"), MAX_LINEAR_MPS)
         angular = _clamp(_finite_float(body, "angular"), MAX_ANGULAR_RPS)
-        self.ros.set_jog(linear, angular)
+        self.ros.set_jog(linear, angular, _control_mode(body))
         self._send_json(200, {"ok": True, "linear": linear, "angular": angular})
 
     def _handle_pose(self) -> None:

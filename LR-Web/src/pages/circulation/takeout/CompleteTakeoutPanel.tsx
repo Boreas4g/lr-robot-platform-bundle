@@ -1,4 +1,4 @@
-import { RocketOutlined } from '@ant-design/icons';
+import { RocketOutlined, SaveOutlined } from '@ant-design/icons';
 import {
   Alert,
   App,
@@ -32,12 +32,17 @@ import type {
   MapAnnotation,
   MapVersion,
   RobotSummary,
+  TakeoutMode,
 } from '@/services/libraryRobot/types';
 import { errorMessage } from '@/utils/errorText';
 import AnnotationTargetSelect from '../components/AnnotationTargetSelect';
 import MapPosePreview from '../components/MapPosePreview';
 import { mapBoundsText, targetWithinMap } from '../components/mapBounds';
 import VisionImage from '../components/VisionImage';
+import {
+  loadTakeoutOptions,
+  saveTakeoutOptions,
+} from '../components/workflowOptions';
 
 const TERMINAL_STATES = [
   'completed',
@@ -57,19 +62,39 @@ export default function CompleteTakeoutPanel({
   onTaskCreated?: (task: DispatchTask) => void;
 }) {
   const { message } = App.useApp();
+  const [savedOptions] = useState(loadTakeoutOptions);
   const [books, setBooks] = useState<Book[]>([]);
   const [annotations, setAnnotations] = useState<MapAnnotation[]>([]);
   const [maps, setMaps] = useState<MapVersion[]>([]);
   const [robot, setRobot] = useState<RobotSummary>();
   const [mapId, setMapId] = useState<string>();
-  const [robotId, setRobotId] = useState<string>('LR-01');
-  const [bookId, setBookId] = useState<string>();
-  const [annotationId, setAnnotationId] = useState<string>();
-  const [manualMode, setManualMode] = useState(false);
-  const [manualTarget, setManualTarget] = useState({ x: 0, y: 0, yaw: 0 });
-  const [liftHeightMm, setLiftHeightMm] = useState(DEFAULT_BOOK_HEIGHT_MM);
-  const [destinationSlot, setDestinationSlot] = useState<number>();
-  const [sendNavigation, setSendNavigation] = useState(true);
+  const [robotId, setRobotId] = useState<string>(
+    savedOptions?.robotId ?? 'LR-01',
+  );
+  const [bookId, setBookId] = useState<string | undefined>(
+    savedOptions?.bookId,
+  );
+  const [annotationId, setAnnotationId] = useState<string | undefined>(
+    savedOptions?.annotationId,
+  );
+  const [manualMode, setManualMode] = useState(
+    savedOptions?.manualMode ?? false,
+  );
+  const [manualTarget, setManualTarget] = useState(
+    savedOptions?.manualTarget ?? { x: 0, y: 0, yaw: 0 },
+  );
+  const [liftHeightMm, setLiftHeightMm] = useState(
+    savedOptions?.liftHeightMm ?? DEFAULT_BOOK_HEIGHT_MM,
+  );
+  const [destinationSlot, setDestinationSlot] = useState<number | undefined>(
+    savedOptions?.destinationSlot,
+  );
+  const [takeoutMode, setTakeoutMode] = useState<TakeoutMode>(
+    savedOptions?.takeoutMode ?? 'standard',
+  );
+  const [sendNavigation, setSendNavigation] = useState(
+    savedOptions?.sendNavigation ?? true,
+  );
   const [activeTaskId, setActiveTaskId] = useState<string>();
   const [activeTask, setActiveTask] = useState<DispatchTask>();
   const [submitting, setSubmitting] = useState(false);
@@ -258,6 +283,7 @@ export default function CompleteTakeoutPanel({
         target: sendNavigation ? effectiveTarget : undefined,
         liftHeightMm,
         destinationSlot,
+        takeoutMode,
         liftSpeedLevel: 2,
         mapId: freshMap?.id ?? mapId,
         annotationId: effectiveAnnotationId,
@@ -288,6 +314,25 @@ export default function CompleteTakeoutPanel({
     }
   }
 
+  function saveOptions() {
+    const saved = saveTakeoutOptions({
+      robotId,
+      bookId,
+      annotationId,
+      manualMode,
+      manualTarget,
+      liftHeightMm,
+      destinationSlot,
+      takeoutMode,
+      sendNavigation,
+    });
+    if (saved) {
+      message.success('取书选项参数已保存，下次打开本页将自动恢复。');
+    } else {
+      message.error('浏览器存储不可用，取书选项参数保存失败。');
+    }
+  }
+
   return (
     <Card
       className="robot-workflow-card"
@@ -301,9 +346,26 @@ export default function CompleteTakeoutPanel({
           onChange={(event) => setSendNavigation(event.target.checked)}
           disabled={taskActive}
         >
-          发送导航（勾选后先导航到目标点并低速精调；不勾选则底盘不动，原地直接开始升降取书）
+          发送导航（勾选后先导航到目标点并低速精调；不勾选则跳过导航和车辆居中对齐，底盘保持不动并原地取书）
         </Checkbox>
-        <Space className="robot-workflow-fields" wrap size={[12, 8]} style={{ width: '100%' }}>
+        <Space
+          className="robot-workflow-fields"
+          wrap
+          size={[12, 8]}
+          style={{ width: '100%' }}
+        >
+          <Radio.Group
+            value={takeoutMode}
+            onChange={(event) =>
+              setTakeoutMode(event.target.value as TakeoutMode)
+            }
+            options={[
+              { value: 'standard', label: '普通取书' },
+              { value: 'mid', label: '中位取书' },
+            ]}
+            optionType="button"
+            disabled={taskActive}
+          />
           <Select
             style={{ minWidth: 260 }}
             placeholder="选择书籍（书籍管理）"
@@ -434,6 +496,9 @@ export default function CompleteTakeoutPanel({
           />
         ) : null}
         <Space wrap>
+          <Button icon={<SaveOutlined />} onClick={saveOptions}>
+            保存选项参数
+          </Button>
           <Popconfirm
             title="开始完整取书？"
             description={

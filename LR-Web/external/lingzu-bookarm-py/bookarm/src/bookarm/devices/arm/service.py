@@ -46,6 +46,14 @@ DISABLE_JOINT = JointPose.from_values((-0.033182, 0.004412, -0.005946, 0.367308,
 # Carry-hold frames for joint 7 are re-sent at this rate, decimated from the
 # 200 Hz joint 1--6 loop so gripper holding never starves arm control.
 _GRIPPER_CARRY_RATE_HZ = 25.0
+_ADAPTIVE_CARRY_SLIP_TIME_S = 0.15
+_ADAPTIVE_CARRY_ADJUST_INTERVAL_S = 0.20
+_ADAPTIVE_CARRY_RECOVERY_STEP_DEG = 1.0
+_ADAPTIVE_CARRY_RECOVERY_EFFORT_STEP_NM = 0.05
+_ADAPTIVE_CARRY_TORQUE_DROP_RATIO = 0.25
+_ADAPTIVE_CARRY_MIN_TORQUE_NM = 0.05
+_ADAPTIVE_CARRY_LOST_DEG = 6.0
+_ADAPTIVE_CARRY_LOST_TIME_S = 0.30
 
 # Messages marking a transient CAN feedback stall (frozen hold target). Only
 # this failure class is eligible for motion resend; thermal lockout, control
@@ -149,9 +157,9 @@ class ArmService:
         self._control_lock = threading.RLock()
         self._control_target = ZERO_JOINT
         self._control_velocities = (0.0,) * 6
-        # Two-stage grip state: when set, the control loop re-sends a low-torque
-        # carry frame for joint 7 at a decimated rate (see _control_loop_main).
-        self._gripper_carry: Optional[Dict[str, float]] = None
+        # Carry state: the control loop re-sends joint-7 hold frames and, for
+        # adaptive holds, updates bounded recovery from position/torque feedback.
+        self._gripper_carry: Optional[Dict[str, Any]] = None
         # Joint-7 (gripper) state is tracked independently from the arm body:
         # an overheated gripper drops out of Motor mode while joints 1--6 keep
         # working, and that must not paralyse the whole arm.
@@ -268,7 +276,7 @@ class ArmService:
             if gripper_temp >= gripper_limit:
                 if self._gripper_thermal_warning is None:
                     print(
-                        "[THERMAL] gripper joint 7 at %.1f C (limit %.1f C); carry hold paused, arm body unaffected"
+                        "[THERMAL] gripper joint 7 at %.1f C (limit %.1f C); carry hold paused"
                         % (gripper_temp, gripper_limit),
                         file=sys.stderr,
                     )
@@ -276,7 +284,14 @@ class ArmService:
                     "gripper motor 7 at %.1f C (limit %.1f C); carry hold paused for cooling"
                     % (gripper_temp, gripper_limit)
                 )
+                adaptive = self._gripper_carry is not None and bool(
+                    self._gripper_carry.get("adaptive")
+                )
                 self._clear_gripper_carry()
+                if adaptive:
+                    with self._control_lock:
+                        self._control_error = self._gripper_thermal_warning
+                    self._control_stop.set()
             elif gripper_temp < gripper_limit - 5.0:
                 self._gripper_thermal_warning = None
         release_c = float(self.config.thermal_release_c)
@@ -391,11 +406,22 @@ class ArmService:
         """Carry-hold view for hardware status: armed/derated + thermal note."""
 
         with self._control_lock:
-            return {
-                "armed": self._gripper_carry is not None,
+            carry = self._gripper_carry
+            result = {
+                "armed": carry is not None,
                 "derated": self._gripper_carry_derated,
                 "thermal_warning": self._gripper_thermal_warning,
+                "adaptive": bool(carry and carry.get("adaptive")),
             }
+            if carry and carry.get("adaptive"):
+                result.update(
+                    recovery_count=int(carry["recovery_count"]),
+                    target_angle_rad=float(carry["target_rad"]),
+                    effort=float(carry["effort"]),
+                    opening_deg=math.degrees(float(carry["last_opening_rad"])),
+                    torque_nm=float(carry["last_torque_nm"]),
+                )
+            return result
 
     def clear_thermal_lockout(self) -> Dict[str, object]:
         """Stop all in-flight arm activity, then clear a latched lockout.
@@ -1521,13 +1547,63 @@ class ArmService:
                     "gripper carry hold requires finite non-negative effort and lead"
                 )
             carry_target = command_angle + direction * carry_lead
-            self._set_gripper_carry(carry_target, command.kp, command.kd, carry_effort)
+            adaptive_state = None
+            if command.adaptive_carry:
+                max_effort = float(command.adaptive_carry_max_effort)
+                slip_angle = math.radians(float(command.adaptive_carry_slip_deg))
+                max_recovery = math.radians(float(command.adaptive_carry_max_recovery_deg))
+                if (
+                    not all(math.isfinite(value) for value in (max_effort, slip_angle, max_recovery))
+                    or max_effort < carry_effort
+                    or slip_angle <= 0.0
+                    or max_recovery < 0.0
+                ):
+                    raise ValueError("invalid adaptive gripper carry limits")
+                contact_feedback = transport.feedback().get(7)
+                contact_torque = (
+                    abs(float(contact_feedback.torque_nm))
+                    if contact_feedback is not None
+                    else 0.0
+                )
+                lower, upper = self.config.joint_limits[7]
+                if direction > 0.0:
+                    max_target = max(carry_target, min(upper, carry_target + max_recovery))
+                else:
+                    max_target = min(carry_target, max(lower, carry_target - max_recovery))
+                adaptive_state = {
+                    "adaptive": True,
+                    "close_direction": float(direction),
+                    "reference_angle_rad": float(last_feedback),
+                    "base_target_rad": float(carry_target),
+                    "max_target_rad": float(max_target),
+                    "base_effort": float(carry_effort),
+                    "max_effort": max_effort,
+                    "torque_floor_nm": max(
+                        _ADAPTIVE_CARRY_MIN_TORQUE_NM,
+                        contact_torque * _ADAPTIVE_CARRY_TORQUE_DROP_RATIO,
+                    ),
+                    "slip_angle_rad": slip_angle,
+                    "slip_since": None,
+                    "lost_since": None,
+                    "last_adjust_s": None,
+                    "recovery_count": 0,
+                    "last_opening_rad": 0.0,
+                    "last_torque_nm": contact_torque,
+                }
+            self._set_gripper_carry(
+                carry_target, command.kp, command.kd, carry_effort, adaptive=adaptive_state
+            )
             carry_details = {
                 "carry_hold": True,
                 "carry_target_angle_rad": carry_target,
                 "carry_effort": carry_effort,
                 "carry_lead_deg": math.degrees(carry_lead),
+                "adaptive_carry": adaptive_state is not None,
             }
+            if adaptive_state is not None:
+                carry_details["contact_torque_nm"] = adaptive_state["last_torque_nm"]
+                carry_details["carry_max_effort"] = adaptive_state["max_effort"]
+                carry_details["carry_max_recovery_deg"] = math.degrees(max_recovery)
         return {
             "reason": reason,
             "target_angle_rad": target_rad,
@@ -1643,9 +1719,15 @@ class ArmService:
         return True
 
     def _set_gripper_carry(
-        self, target_rad: float, kp: float, kd: float, effort: float
+        self,
+        target_rad: float,
+        kp: float,
+        kd: float,
+        effort: float,
+        *,
+        adaptive: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Arm the low-torque carry hold; the control loop re-sends it."""
+        """Arm the carry hold; the control loop re-sends it."""
 
         with self._control_lock:
             self._gripper_carry = {
@@ -1653,37 +1735,108 @@ class ArmService:
                 "kp": float(kp),
                 "kd": float(kd),
                 "effort": float(effort),
+                **(adaptive or {}),
             }
 
     def _clear_gripper_carry(self) -> None:
         with self._control_lock:
             self._gripper_carry = None
 
-    def _send_gripper_carry_frame(
-        self, carry: Dict[str, float], gripper_feedback: Optional[Any]
+    def _update_adaptive_carry(
+        self,
+        carry: Dict[str, Any],
+        gripper_feedback: Any,
+        now_s: float,
+        derated: bool,
     ) -> None:
-        """Send one carry-hold frame for joint 7 from the control loop.
+        close_direction = float(carry["close_direction"])
+        actual_angle = (
+            float(gripper_feedback.position_rad) - float(self.config.joint_offsets[7])
+        ) * self._joint_direction(7)
+        opening = -close_direction * (actual_angle - float(carry["reference_angle_rad"]))
+        torque = abs(float(gripper_feedback.torque_nm))
+        with self._control_lock:
+            if self._gripper_carry is not carry:
+                return
+            carry["last_opening_rad"] = opening
+            carry["last_torque_nm"] = torque
+            torque_low = torque < float(carry["torque_floor_nm"])
+            lost = opening >= math.radians(_ADAPTIVE_CARRY_LOST_DEG) and torque_low
+            if lost:
+                if carry["lost_since"] is None:
+                    carry["lost_since"] = now_s
+                elif now_s - float(carry["lost_since"]) >= _ADAPTIVE_CARRY_LOST_TIME_S:
+                    raise RuntimeError(
+                        "gripper lost book during adaptive carry (opening %.2f deg, torque %.3f Nm)"
+                        % (math.degrees(opening), torque)
+                    )
+            else:
+                carry["lost_since"] = None
+            if derated:
+                carry["slip_since"] = None
+                carry["last_adjust_s"] = None
+                return
+            slipping = opening >= float(carry["slip_angle_rad"]) or torque_low
+            if not slipping:
+                carry["slip_since"] = None
+                carry["last_adjust_s"] = None
+                return
+            if carry["slip_since"] is None:
+                carry["slip_since"] = now_s
+                return
+            if now_s - float(carry["slip_since"]) < _ADAPTIVE_CARRY_SLIP_TIME_S:
+                return
+            last_adjust = carry["last_adjust_s"]
+            if (
+                last_adjust is not None
+                and now_s - float(last_adjust) < _ADAPTIVE_CARRY_ADJUST_INTERVAL_S
+            ):
+                return
+            target = float(carry["target_rad"])
+            step = math.radians(_ADAPTIVE_CARRY_RECOVERY_STEP_DEG)
+            if close_direction > 0.0:
+                new_target = min(float(carry["max_target_rad"]), target + step)
+            else:
+                new_target = max(float(carry["max_target_rad"]), target - step)
+            new_effort = min(
+                float(carry["max_effort"]),
+                float(carry["effort"]) + _ADAPTIVE_CARRY_RECOVERY_EFFORT_STEP_NM,
+            )
+            if new_target == target and new_effort == float(carry["effort"]):
+                return
+            carry["target_rad"] = new_target
+            carry["effort"] = new_effort
+            carry["recovery_count"] = int(carry["recovery_count"]) + 1
+            carry["last_adjust_s"] = now_s
 
-        A gripper that dropped out of Motor mode (thermal firmware torque cut)
-        stops the carry hold instead of erroring the arm control loop. While
-        the gripper runs hot the carry torque is halved with hysteresis.
-        """
+    def _send_gripper_carry_frame(
+        self, carry: Dict[str, Any], gripper_feedback: Optional[Any]
+    ) -> None:
+        """Send one carry frame, with bounded slip recovery for adaptive holds."""
 
         now = time.time()
+        adaptive = bool(carry.get("adaptive"))
         fresh = (
             gripper_feedback is not None
             and now - float(gripper_feedback.timestamp_s)
             <= float(self.config.feedback_max_age_s)
         )
         if not fresh or int(gripper_feedback.mode_state) != int(MotorModeState.MOTOR):
+            self._gripper_enabled = False
+            self._clear_gripper_carry()
+            if adaptive:
+                raise RuntimeError("adaptive gripper carry requires fresh Motor-mode feedback")
             print(
                 "[ARM] gripper motor is not in Motor mode; carry hold stopped",
                 file=sys.stderr,
             )
-            self._gripper_enabled = False
-            self._clear_gripper_carry()
             return
         temperature = float(gripper_feedback.temperature_c)
+        if adaptive and temperature >= float(self.config.gripper_thermal_limit_c):
+            self._clear_gripper_carry()
+            raise RuntimeError(
+                "gripper motor 7 at %.1f C; adaptive carry stopped" % temperature
+            )
         with self._control_lock:
             derated = self._gripper_carry_derated
         if temperature >= float(self.config.gripper_derate_onset_c):
@@ -1693,6 +1846,8 @@ class ArmService:
         # Between release and onset the previous state holds (5 C hysteresis).
         with self._control_lock:
             self._gripper_carry_derated = derated
+        if adaptive:
+            self._update_adaptive_carry(carry, gripper_feedback, time.monotonic(), derated)
         effort = float(carry["effort"])
         if derated:
             effort = max(float(self.config.gripper_derate_min_effort), effort / 2.0)

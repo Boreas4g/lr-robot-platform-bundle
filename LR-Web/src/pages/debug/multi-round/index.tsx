@@ -13,6 +13,7 @@ import {
   Card,
   Col,
   Popconfirm,
+  Radio,
   Row,
   Select,
   Space,
@@ -31,7 +32,7 @@ import {
   tuningArmEnable,
   tuningStepRun,
 } from '@/services/libraryRobot/tuning';
-import type { Book } from '@/services/libraryRobot/types';
+import type { Book, TakeoutMode } from '@/services/libraryRobot/types';
 import { errorMessage } from '@/utils/errorText';
 
 /** Multi-round tuning: drive the shared take / mid-return tuning sessions
@@ -76,6 +77,7 @@ const KIND_LABEL: Record<TuningKind, string> = {
   take: '取书',
   return: '还书',
   midreturn: '还书',
+  midtakeout: '中位取书',
 };
 
 function entryTitle(entry: QueueEntry) {
@@ -87,6 +89,7 @@ export default function MultiRoundDebugPage() {
   const [books, setBooks] = useState<Book[]>([]);
   const [takeBookIds, setTakeBookIds] = useState<string[]>([]);
   const [returnBookIds, setReturnBookIds] = useState<string[]>([]);
+  const [takeoutMode, setTakeoutMode] = useState<TakeoutMode>('standard');
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [armAction, setArmAction] = useState(false);
@@ -110,14 +113,18 @@ export default function MultiRoundDebugPage() {
     return books.find((book) => book.id === id);
   }
 
-  function buildQueue(takeIds: string[], returnIds: string[]): QueueEntry[] {
+  function buildQueue(
+    takeIds: string[],
+    returnIds: string[],
+    mode: TakeoutMode = takeoutMode,
+  ): QueueEntry[] {
     // Same slot order as the production multi-round flow: N takes occupy
     // slots N..1 inside-out, return j picks slot j back up outside-in.
     const takes = takeIds
       .map((id, index) => ({
         id,
         slot: takeIds.length - index,
-        kind: 'take' as const,
+        kind: (mode === 'mid' ? 'midtakeout' : 'take') as TuningKind,
       }))
       .filter((item) => bookById(item.id));
     const returns = returnIds
@@ -327,6 +334,20 @@ export default function MultiRoundDebugPage() {
       />
       <Card size="small" title="书籍与槽位" style={{ marginBottom: 16 }}>
         <Space wrap size={[16, 12]}>
+          <Radio.Group
+            value={takeoutMode}
+            onChange={(event) => {
+              const mode = event.target.value as TakeoutMode;
+              setTakeoutMode(mode);
+              setQueue(buildQueue(takeBookIds, returnBookIds, mode));
+            }}
+            options={[
+              { value: 'standard', label: '普通取书' },
+              { value: 'mid', label: '中位取书' },
+            ]}
+            optionType="button"
+            disabled={busy}
+          />
           <span>
             <Typography.Text type="secondary">
               取书（顺序 = 槽位 N..1，由内向外）

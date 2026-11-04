@@ -7,11 +7,12 @@ import {
 } from './tuning';
 
 describe('SPEED_LEVEL_OPTIONS', () => {
-  it('offers slow/standard/fast in display order', () => {
+  it('offers slow/standard/fast/ultra in display order', () => {
     expect(SPEED_LEVEL_OPTIONS.map((option) => option.value)).toEqual([
       'slow',
       'standard',
       'fast',
+      'ultra',
     ]);
   });
 });
@@ -20,6 +21,7 @@ describe('normalizeSpeedLevel', () => {
   it('reads the level stored in a profile', () => {
     expect(normalizeSpeedLevel({ speed_level: 'slow' })).toBe('slow');
     expect(normalizeSpeedLevel({ speed_level: 'fast' })).toBe('fast');
+    expect(normalizeSpeedLevel({ speed_level: 'ultra' })).toBe('ultra');
     expect(normalizeSpeedLevel({ speed_level: 'standard' })).toBe('standard');
   });
 

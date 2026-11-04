@@ -4,6 +4,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/deployment-mode.sh"
+require_local_deployment || exit 1
 # shellcheck source=env.sh
 . "$SCRIPT_DIR/env.sh"
 
@@ -38,16 +40,8 @@ for name in gateway mapping_agent pose_bridge laser_merger tf_rear tf_front \
   stop_one "$name"
 done
 
-# PID files can miss orphans from an interrupted start (setsid reparents
-# children). Sweep any remaining node owned by this bundle.
-for pid in $(ps -eo pid,args | grep -E '[.]local-stack/ros-install|[d]eploy/local/manual_pose_bridge.py|[s]cripts/mapping_agent.py' | awk '{print $1}'); do
-  log "stopping orphan vehicle process (pid $pid)"
-  kill -9 "$pid" 2>/dev/null || true
-done
-
-# Killed Fast DDS processes leave shared-memory segments that break the next
-# ROS 2 discovery. The local stack owns the machine's ROS graph, so clear them
-# once every node is gone.
-rm -f /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_* 2>/dev/null || true
+# The production mapping agent uses the same script path. Do not sweep by
+# command-line substring or delete global DDS shared memory: both can damage
+# independently managed ROS processes, even when they use another ROS domain.
 
 log "vehicle stack stopped"

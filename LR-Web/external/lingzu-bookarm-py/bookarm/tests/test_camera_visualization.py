@@ -73,7 +73,20 @@ class CameraVisualizationTests(unittest.TestCase):
         finally:
             locator._worker.stop()
 
-        self.assertEqual(worker_call.call_args.kwargs["timeout_s"], 5.5)
+        self.assertEqual(worker_call.call_args.kwargs["timeout_s"], 39.5)
+
+    def test_capture_timeout_budget_includes_all_warmup_frames(self) -> None:
+        locator = D435BookSpineLocator(
+            D435BookSpineLocatorConfig(
+                fps=6,
+                warmup_frames=30,
+                frame_timeout_ms=5000,
+            )
+        )
+
+        # 5 seconds per warmup/capture/recovery wait, plus 5 seconds for the
+        # 30 frames at 6 FPS and 2 seconds for startup/settle overhead.
+        self.assertEqual(locator._capture_budget_s(1), 177.0)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ const { once } = require('node:events');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
+const os = require('node:os');
 const test = require('node:test');
 
 async function listen(server) {
@@ -72,4 +73,33 @@ test('private arm proxy verifies each browser session before forwarding', async 
   await new Promise((resolve) => api.close(resolve));
   assert.equal((await fetch(`${base}/v1/studio/library`, { headers })).status, 503);
   assert.equal(forwarded, 1);
+});
+
+test('private arm proxy reports an unavailable Unix socket as 503 JSON', async (t) => {
+  const api = http.createServer((req, res) => {
+    assert.equal(new URL(req.url, 'http://localhost').pathname, '/api/v1/auth/bookarm-access');
+    res.end('{}');
+  });
+  const apiPort = await listen(api);
+  const reserved = http.createServer();
+  const webPort = await listen(reserved);
+  await new Promise((resolve) => reserved.close(resolve));
+  const socketPath = path.join(os.tmpdir(), `lr-bookarm-missing-${process.pid}-${Date.now()}.sock`);
+  const server = spawn(process.execPath, [path.join(__dirname, 'serve-static.cjs'), '--port', String(webPort)], {
+    env: { ...process.env, LR_API_TARGET: `127.0.0.1:${apiPort}`, LR_BOOKARM_SOCKET: socketPath, LR_BOOKARM_TOKEN: '' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(async () => {
+    server.kill();
+    api.closeAllConnections();
+    await new Promise((resolve) => api.close(resolve));
+  });
+  await once(server.stdout, 'data');
+
+  const response = await fetch(`http://127.0.0.1:${webPort}/bookarm-api/v1/studio/hardware/status`, {
+    headers: { Authorization: 'Bearer public-test-session' },
+  });
+  assert.equal(response.status, 503);
+  assert.match(response.headers.get('content-type'), /application\/json/);
+  assert.match((await response.json()).detail, /BookArm 服务和设备连接/);
 });

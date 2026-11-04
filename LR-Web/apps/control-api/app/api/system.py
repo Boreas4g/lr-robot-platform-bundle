@@ -171,29 +171,18 @@ async def restart_all(user: User = Depends(get_current_user)) -> StartAllView:
 
 
 # ---------------------------------------------------------------------------
-# 机械臂硬件启动确认（运行总览页开关）
+# BookArm startup-policy compatibility for older dashboard clients
 # ---------------------------------------------------------------------------
-
-# The one-click start script treats can0/arm-service as opt-in hardware steps:
-# when this plain-text policy file (true/false) is readable it takes precedence
-# over the static LR_BOOKARM_ALLOW_START env baked into the host-agent unit, so
-# the dashboard toggle takes effect without editing systemd units.
-BOOKARM_START_POLICY_FILE = Path(get_settings().bookarm_start_policy_file)
 
 
 class BookarmStartPolicyView(BaseModel):
-    """机械臂硬件启动确认状态：allow=true 时一键启动才会配置 can0 并拉起机械臂服务。"""
+    """Compatibility response; managed startup always includes the BookArm service."""
 
     allow: bool
 
 
 def _read_bookarm_start_policy() -> BookarmStartPolicyView:
-    try:
-        content = BOOKARM_START_POLICY_FILE.read_text(encoding="utf-8")
-    except OSError:
-        # 文件缺失一律按未确认处理（安全默认：不碰机械臂硬件）。
-        return BookarmStartPolicyView(allow=False)
-    return BookarmStartPolicyView(allow=content.strip() == "true")
+    return BookarmStartPolicyView(allow=True)
 
 
 @router.get("/system/bookarm-start-policy", response_model=BookarmStartPolicyView)
@@ -206,15 +195,4 @@ def put_bookarm_start_policy(
     payload: BookarmStartPolicyView, user: User = Depends(get_current_user)
 ) -> BookarmStartPolicyView:
     _check_operator(user, "机械臂硬件启动确认")
-    # 部署好的策略文件是 root:boreas 组可写、但所在目录组不可写，不能在同目录
-    # 建临时文件做原子替换；内容仅数字节，原地覆写不会被读到半截。
-    try:
-        BOOKARM_START_POLICY_FILE.write_text(
-            "true\n" if payload.allow else "false\n", encoding="utf-8"
-        )
-    except OSError as error:
-        raise HTTPException(
-            status_code=500,
-            detail=f"无法写入策略文件 {BOOKARM_START_POLICY_FILE}：{error}",
-        ) from error
-    return BookarmStartPolicyView(allow=payload.allow)
+    return BookarmStartPolicyView(allow=True)

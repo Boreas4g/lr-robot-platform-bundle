@@ -142,6 +142,36 @@ class MidReturnServiceTests(unittest.TestCase):
             ["lift_move", "arm_debug_pose", "vision_target", "book_grasp"],
         )
 
+    def test_midreturn_task_accepts_disabled_vehicle_alignment(self):
+        submitted = []
+        original_submit = self.runner.submit_mid_return
+
+        def capture_request(request):
+            submitted.append(request)
+            return original_submit(request)
+
+        self.runner.submit_mid_return = capture_request
+        response = create_midreturn_task(self.client, enable_vehicle_alignment=False)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(len(submitted), 1)
+        self.assertFalse(submitted[0].enable_vehicle_alignment)
+
+    def test_takeout_task_accepts_disabled_vehicle_alignment(self):
+        submitted = []
+        original_submit = self.runner.submit_take
+
+        def capture_request(request):
+            submitted.append(request)
+            return original_submit(request)
+
+        self.runner.submit_take = capture_request
+        response = create_takeout_task(self.client, enable_vehicle_alignment=False)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(len(submitted), 1)
+        self.assertFalse(submitted[0].enable_vehicle_alignment)
+
     def test_invalid_stop_stage_is_rejected(self):
         response = create_midreturn_task(self.client, stop_after_stage="nonsense")
 

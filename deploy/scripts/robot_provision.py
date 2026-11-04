@@ -37,7 +37,10 @@ def provision(p, private, settings):
         if session.get(RobotModel, p["robot_id"]) is None:
             session.add(RobotModel(id=p["robot_id"], name=p["robot_name"], status="offline", location="等待真实定位",
                         current_task="", map_version="迁移地图", map_id=p["active_map_id"], pose=None,
-                        localization_status="unknown", localization_scan_mode="unknown", health={},
+                        localization_status="unknown", localization_scan_mode="unknown",
+                        health={"navigation": False, "chassis": False, "arm": False, "rod": False,
+                                "imu": False, "lift": False, "camera": False,
+                                "liftAbsolutePositioningReady": False},
                         updated_at=datetime.now(timezone.utc).isoformat()))
         baseline = Path(p["baseline"])
         registry = json.loads((baseline / "robot/map-registry.json").read_text())

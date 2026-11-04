@@ -61,7 +61,6 @@ def register_imported_map(
                     "sudo",
                     "-n",
                     str(REGISTER_SCRIPT),
-                    "stage",
                     "--map-id",
                     map_version.id,
                     "--map-yaml",

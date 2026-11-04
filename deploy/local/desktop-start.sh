@@ -1,22 +1,16 @@
 #!/usr/bin/env bash
-# Desktop launcher helper: start the complete local control station.
+# Desktop launcher: open the installed station, or start a local demo.
 #
-# Intended to be invoked by ~/Desktop/启动图书馆机器人.desktop. It starts the
-# user-space PostgreSQL/Redis/Mosquitto stack, control-api, the static web
-# server and the BookArm --fake service, then opens the operator page.
-#
-# Remove LR_BOOKARM_FAKE (or set it to false) here once real BookArm hardware
-# is connected; the fake service would otherwise report simulated device health.
+# The legacy local stack is only for machines without managed LR units.
 
 set -uo pipefail
 
 BUNDLE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$BUNDLE_ROOT/deploy/local/deployment-mode.sh"
 LOG_DIR="$BUNDLE_ROOT/.local-stack/logs"
 LOCK="$BUNDLE_ROOT/.local-stack/run/desktop-start.lock"
 LOG="$LOG_DIR/desktop-start.log"
 WEB_URL="http://localhost:8000"
-
-mkdir -p "$LOG_DIR" "$(dirname "$LOCK")"
 
 notify() {
   local urgency=$1 title=$2 body=$3
@@ -25,6 +19,20 @@ notify() {
       "$title" "$body" 2>/dev/null || true
   fi
 }
+
+if managed_deployment_unit >/dev/null; then
+  if curl -fsS --max-time 5 "$WEB_URL/health" >/dev/null 2>&1; then
+    notify normal "图书馆机器人" "正在打开正式控制台"
+    if command -v xdg-open >/dev/null 2>&1; then
+      xdg-open "$WEB_URL/" >/dev/null 2>&1 &
+    fi
+    exit 0
+  fi
+  notify critical "图书馆机器人控制台不可用" "本机已安装正式服务，请检查 lr-web-static 和 lr-control-api 服务。"
+  exit 1
+fi
+
+mkdir -p "$LOG_DIR" "$(dirname "$LOCK")"
 
 # A double click must not race two full-stack starts against the same data dirs.
 exec 9>"$LOCK"

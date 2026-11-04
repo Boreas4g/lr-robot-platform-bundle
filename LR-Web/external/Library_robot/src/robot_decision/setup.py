@@ -33,6 +33,7 @@ setup(
             "point3_fine_tune_node = robot_decision.point3_fine_tune_node:main",
             "book_center_detector_node = robot_decision.book_center_detector_node:main",
             "vehicle_nudge_node = robot_decision.vehicle_nudge_node:main",
+            "curvature_limiter_node = robot_decision.curvature_limiter_node:main",
         ],
     },
 )

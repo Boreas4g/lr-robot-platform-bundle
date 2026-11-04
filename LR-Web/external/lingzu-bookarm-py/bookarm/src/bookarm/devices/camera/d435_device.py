@@ -128,6 +128,38 @@ class D435Device:
         with self._pipeline_lock:
             self._open_pipeline()
 
+    @staticmethod
+    def _resolve_device_serial(rs: Any, configured_serial: str) -> str:
+        """Accept either librealsense's device serial or its ASIC serial."""
+
+        serial_info = rs.camera_info.serial_number
+        asic_serial_info = getattr(rs.camera_info, "asic_serial_number", None)
+        try:
+            devices = rs.context().query_devices()
+        except Exception:
+            return configured_serial
+
+        for device in devices:
+            try:
+                device_serial = str(device.get_info(serial_info))
+            except Exception:
+                continue
+            if device_serial == configured_serial:
+                return device_serial
+            if asic_serial_info is None:
+                continue
+            try:
+                if device.supports(asic_serial_info) and str(device.get_info(asic_serial_info)) == configured_serial:
+                    print(
+                        "[D435] configured identifier %s is an ASIC serial; using RealSense serial %s"
+                        % (configured_serial, device_serial),
+                        file=sys.stderr,
+                    )
+                    return device_serial
+            except Exception:
+                continue
+        return configured_serial
+
     def _open_pipeline(self) -> None:
         try:
             import pyrealsense2 as rs
@@ -135,7 +167,7 @@ class D435Device:
             raise RuntimeError("bookarm camera requires pyrealsense2") from error
         pipeline = rs.pipeline()
         config = rs.config()
-        config.enable_device(self.serial)
+        config.enable_device(self._resolve_device_serial(rs, self.serial))
         config.enable_stream(rs.stream.depth, self.depth_width, self.depth_height, rs.format.z16, self.fps)
         config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.fps)
         try:

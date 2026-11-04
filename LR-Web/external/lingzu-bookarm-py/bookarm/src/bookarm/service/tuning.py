@@ -26,7 +26,12 @@ from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query
 
-from bookarm.application.use_cases.mid_return import OffworkerArmProbe, insert_chain_poses
+from bookarm.application.post_vision import take_book_grasp_poses
+from bookarm.application.use_cases.mid_return import (
+    OffworkerArmProbe,
+    insert_chain_poses,
+    stand_pickup_gripper_command,
+)
 from bookarm.domain.models.book import BookTarget, ShelfPlacementTarget, SpineTemplate
 from bookarm.domain.models.pose import BasePose, JointPose
 from bookarm.domain.models.shelf import BookStandPickupPlan, SlotPlacementPlan
@@ -41,6 +46,7 @@ from bookarm.infrastructure.config.calibration import (
 )
 from bookarm.infrastructure.config.profiles import (
     load_mid_return_motion_plan,
+    load_mid_takeout_motion_plan,
     load_return_book_motion_plan,
     load_take_book_motion_plan,
 )
@@ -369,7 +375,7 @@ class TuningSession:
         busy_lock: threading.Lock,
         preempt: Optional[Callable[[], None]] = None,
     ) -> None:
-        if kind not in ("take", "return", "midreturn"):
+        if kind not in ("take", "return", "midreturn", "midtakeout"):
             raise ValueError("unsupported tuning kind: %s" % kind)
         self._kind = kind
         self._plan_provider = plan_provider
@@ -667,9 +673,57 @@ class TuningSession:
     def _steps(self, plan: Any) -> Tuple[TuningStep, ...]:
         if self._kind == "take":
             return self._take_steps(plan)
+        if self._kind == "midtakeout":
+            return self._mid_takeout_steps(plan)
         if self._kind == "midreturn":
             return self._mid_return_steps(plan)
         return self._return_steps(plan)
+
+    def _mid_takeout_steps(self, plan: Any) -> Tuple[TuningStep, ...]:
+        mid_steps = self._mid_return_steps(plan)
+        take_steps = self._take_steps(plan)
+        arm = self._devices.arm
+
+        def raised_pose() -> BasePose:
+            fine = self._book_target().grasp_pose.offset_cm(
+                plan.fine_grasp_offset_cm, rpy_deg=plan.fine_grasp_rpy_deg
+            )
+            push_in = fine.offset_cm((plan.push_in_x_offset_cm, 0.0, 0.0))
+            re_push = push_in.offset_cm((plan.re_push_x_offset_cm, 0.0, 0.0))
+            return re_push.offset_cm((0.0, 0.0, plan.raise_z_offset_cm))
+
+        def lower_pose() -> BasePose:
+            return raised_pose().offset_cm(
+                plan.lower_offset_cm, rpy_offset_deg=plan.lower_rpy_offset_deg
+            )
+
+        def run_pose(pose: BasePose, duration_s: float) -> Dict[str, Any]:
+            arm.move_l(pose, duration_s)
+            return {"base_pose": list(pose.values())}
+
+        raise_step = TuningStep(
+            "机械臂上移",
+            True,
+            lambda: run_pose(raised_pose(), plan.raise_duration_s),
+            preview=lambda: _tcp_step_preview(
+                raised_pose(), plan.raise_duration_s, "move_l"
+            ),
+        )
+        lower_step = replace(
+            mid_steps[11],
+            action=lambda: run_pose(lower_pose(), plan.lower_duration_s),
+            preview=lambda: _tcp_step_preview(
+                lower_pose(), plan.lower_duration_s, "move_l"
+            ),
+        )
+        return (
+            *mid_steps[:10],
+            raise_step,
+            mid_steps[10],
+            lower_step,
+            replace(mid_steps[13], name="完全闭合夹爪"),
+            *take_steps[8:],
+        )
 
     def _take_steps(self, plan: TakeBookMotionPlan) -> Tuple[TuningStep, ...]:
         """Take-book steps mirroring TakeBookUseCase._grasp_book/_place_in_stand."""
@@ -740,9 +794,9 @@ class TuningSession:
             return {"gripper_close": arm.close_gripper_monitored(plan.gripper)}
 
         def post_grasp_pose() -> BasePose:
-            return fine_grasp_pose().offset_cm(
-                plan.post_grasp_offset_cm, rpy_offset_deg=plan.post_grasp_rpy_offset_deg
-            )
+            return take_book_grasp_poses(
+                self._book_target(), plan, OffworkerArmProbe(arm).check_pose_reachable
+            )["arm_post_grasp"]
 
         def post_grasp() -> Dict[str, Any]:
             pose = post_grasp_pose()
@@ -884,14 +938,17 @@ class TuningSession:
         return TuningStep(name, False, open_gripper)
 
     def _stand_pickup_drive_steps(
-        self, plan: Any, names: Tuple[str, str, str]
+        self,
+        plan: Any,
+        names: Tuple[str, str],
+        *,
+        adaptive_hold: bool = False,
+        retreat_name: Optional[str] = None,
     ) -> Tuple[TuningStep, ...]:
-        """Book-stand pickup drive chain shared by the mid-return and return
-        sessions: drive onto the calibrated slot, close, retreat to debug.
-        ``names`` are the per-kind step labels (to slot, close, retreat)."""
+        """Drive onto the slot and close; optionally append a debug retreat."""
 
         arm = self._devices.arm
-        slot_name, close_name, retreat_name = names
+        slot_name, close_name = names
 
         def to_book_slot() -> Dict[str, Any]:
             pickup = self._stand_pickup()
@@ -902,17 +959,39 @@ class TuningSession:
                 "grasp_pose": list(pickup.grasp.values()),
             }
 
+        def light_close_down() -> Dict[str, Any]:
+            pickup = self._stand_pickup()
+            command = replace(
+                plan.gripper,
+                close_deg=plan.pickup_light_close_deg,
+                adaptive_carry=False,
+            )
+            close_result = arm.close_gripper_monitored(command)
+            down_cm = float(plan.pickup_light_close_down_cm)
+            lowered = pickup.grasp.offset_cm((0.0, 0.0, -down_cm))
+            if down_cm != 0.0:
+                arm.move_l(lowered, pickup.grasp_duration_s)
+            return {
+                "gripper_close": close_result,
+                "base_pose": list(lowered.values()),
+                "light_close_deg": command.close_deg,
+                "down_cm": down_cm,
+            }
+
         def close_gripper() -> Dict[str, Any]:
-            return {"gripper_close": arm.close_gripper_monitored(plan.gripper)}
+            command = stand_pickup_gripper_command(plan) if adaptive_hold else plan.gripper
+            result = {"gripper_close": arm.close_gripper_monitored(command)}
+            if adaptive_hold:
+                result["adaptive_carry"] = True
+                result["carry_effort"] = command.carry_effort
+            return result
 
         def slot_retreat_debug() -> Dict[str, Any]:
             pickup = self._stand_pickup()
-            # Leave the slot through the collision-checked pre-grasp pose,
-            # exactly like the use cases.
             arm.move_l(pickup.pre_grasp, pickup.retreat_duration_s)
             return self._move_debug(plan)
 
-        return (
+        steps = [
             TuningStep(
                 slot_name,
                 True,
@@ -923,20 +1002,39 @@ class TuningSession:
                     "move_p_by_j",
                     continues=True,
                 ),
-            ),
-            TuningStep(close_name, False, close_gripper),
-            TuningStep(
-                retreat_name,
-                False,
-                slot_retreat_debug,
-                preview=lambda: _tcp_step_preview(
-                    self._stand_pickup().pre_grasp,
-                    self._stand_pickup().retreat_duration_s,
-                    "move_l",
-                    continues=True,
-                ),
-            ),
-        )
+            )
+        ]
+        if adaptive_hold:
+            steps.append(
+                TuningStep(
+                    "轻闭合夹爪并向下移动",
+                    True,
+                    light_close_down,
+                    preview=lambda: _tcp_step_preview(
+                        self._stand_pickup().grasp.offset_cm(
+                            (0.0, 0.0, -float(plan.pickup_light_close_down_cm))
+                        ),
+                        self._stand_pickup().grasp_duration_s,
+                        "move_l",
+                    ),
+                )
+            )
+        steps.append(TuningStep(close_name, False, close_gripper))
+        if retreat_name is not None:
+            steps.append(
+                TuningStep(
+                    retreat_name,
+                    False,
+                    slot_retreat_debug,
+                    preview=lambda: _tcp_step_preview(
+                        self._stand_pickup().pre_grasp,
+                        self._stand_pickup().retreat_duration_s,
+                        "move_l",
+                        continues=True,
+                    ),
+                )
+            )
+        return tuple(steps)
 
     def _retarget_book_step(self, name: str) -> TuningStep:
         """识别目标书 (mid-return and return): re-locate the target book with
@@ -986,9 +1084,8 @@ class TuningSession:
 
         def insert_anchor_pose() -> BasePose:
             """Pre-offset insert anchor: y = fresh-target grasp y +
-            plan.target_y_offset_cm; x/z from the post-pickup recognition,
-            with z clamped up to plan.min_insert_z_m, matching the workflow
-            side."""
+            plan.target_y_offset_cm; x/z from the fresh recognition, with z
+            clamped up to plan.min_insert_z_m, matching the workflow side."""
 
             grasp = target_resolver().grasp_pose
             y1_m = grasp.y_m + float(plan.target_y_offset_cm) / 100.0
@@ -1000,10 +1097,10 @@ class TuningSession:
 
         def chain_poses() -> Dict[str, BasePose]:
             # Shared with the workflow use cases. Pure computation, safe for
-            # previews: a plan without a pinned pre_insert_x_m (return)
-            # IK-searches the outermost reachable x. The probes route off the
-            # arm command worker so an HTTP preview/step never queues behind
-            # a running motion; no motion is commanded either way.
+            # previews: plans without a pinned pre_insert_x_m IK-search the
+            # outermost reachable x. The probes route off the arm command
+            # worker so an HTTP preview/step never queues behind a running
+            # motion; no motion is commanded either way.
             return insert_chain_poses(plan, insert_anchor_pose(), OffworkerArmProbe(arm))
 
         def insert_pose() -> BasePose:
@@ -1157,14 +1254,14 @@ class TuningSession:
         return tuple(steps)
 
     def _mid_return_steps(self, plan: MidReturnMotionPlan) -> Tuple[TuningStep, ...]:
-        """Mid-return steps: grasp chain, put the pulled book back loosely,
-        pick the return book from the stand, re-locate the target book, then
-        insert at y = fresh-target y + plan.target_y_offset_cm.
+        """Mid-return steps: grasp and put back the neighbor, re-target,
+        pick up from the stand, then move directly to pre-insert and insert
+        at y = fresh-target y + plan.target_y_offset_cm.
 
         The grasp chain mirrors TakeBookUseCase._grasp_book; the put-back and
         clear-out moves are single-axis offsets chained off the fine-grasp
         pose; the book slot comes from the book-stand pickup slot selected at
-        prepare time; the insert pose chains off the post-pickup recognition
+        prepare time; the insert pose chains off the pre-pickup recognition
         (x/z) and the configured y offset, because the put-back chain may
         have shifted the neighbour book. Every step stays absolute and
         idempotent, exactly like the take/return sessions.
@@ -1285,6 +1382,11 @@ class TuningSession:
             )
             return {"rod_deg": plan.rod_insert_deg}
 
+        def stand_pre_grasp() -> Dict[str, Any]:
+            pickup = self._stand_pickup()
+            arm.move_l(pickup.pre_grasp, pickup.retreat_duration_s)
+            return {"base_pose": list(pickup.pre_grasp.values())}
+
         def shift_pose() -> BasePose:
             return lower_pose().offset_cm((0.0, plan.shift_y_offset_cm, 0.0))
 
@@ -1384,16 +1486,24 @@ class TuningSession:
                 preview=lambda: _joints_step_preview(plan.debug_joint, plan.debug_duration_s),
             ),
             self._pickup_open_step(plan, "张开夹爪(pickup_open_deg)"),
+            # 放回旧书后先在调试位识别，再持书直接进入后续插入链。
+            self._retarget_book_step("识别目标书"),
             *self._stand_pickup_drive_steps(
                 plan,
-                ("运动到书槽(pre_grasp→grasp)", "闭合夹爪", "回调试位"),
+                ("运动到书槽(pre_grasp→grasp)", "闭合夹爪"),
+                adaptive_hold=True,
             ),
-            # 取回待还书、回调试位之后，把推杆伸到辅助插入角度（默认 0 不动）；
-            # 与识别互不依赖，放在「识别目标书」前镜像自动流程的边界。
             TuningStep("推杆(rod_insert_deg)", False, rod_insert),
-            # 放回旧书、取回待还书后重新识别目标书：放回过程可能让旧书
-            # 移位，后续预插入位/插入位均基于这次识别的目标点计算。
-            self._retarget_book_step("识别目标书"),
+            TuningStep(
+                "到预抓取位",
+                True,
+                stand_pre_grasp,
+                preview=lambda: _tcp_step_preview(
+                    self._stand_pickup().pre_grasp,
+                    self._stand_pickup().retreat_duration_s,
+                    "move_l",
+                ),
+            ),
             *self._insert_chain_steps(
                 plan,
                 (
@@ -1433,7 +1543,8 @@ class TuningSession:
             self._retarget_book_step("识别目标书"),
             *self._stand_pickup_drive_steps(
                 plan,
-                ("运动到书槽", "闭合夹爪", "回调试位"),
+                ("运动到书槽", "闭合夹爪"),
+                retreat_name="回调试位",
             ),
             *self._insert_chain_steps(
                 plan,
@@ -1480,6 +1591,7 @@ class TuningKind:
             "take": load_take_book_motion_plan,
             "return": load_return_book_motion_plan,
             "midreturn": load_mid_return_motion_plan,
+            "midtakeout": load_mid_takeout_motion_plan,
         }[kind]
         self._update_lock = threading.Lock()
         self._base_plan = remove_speed_scaling(plan_getter())
@@ -1563,6 +1675,9 @@ class BookStandSlotsError(ValueError):
 _BOOK_STAND_CALIBRATION_DIR = Path(__file__).resolve().parents[3] / "config" / "calibration"
 DEFAULT_BOOK_STAND_SLOTS_PATH = _BOOK_STAND_CALIBRATION_DIR / "book_stand_slots.json"
 DEFAULT_BOOK_STAND_PICKUP_SLOTS_PATH = _BOOK_STAND_CALIBRATION_DIR / "book_stand_pickup_slots.json"
+DEFAULT_MID_TAKEOUT_SLOTS_PATH = (
+    _BOOK_STAND_CALIBRATION_DIR / "midtakeout_book_stand_slots.json"
+)
 
 # Slot-pose execution: action -> (pose attribute, motion method, duration
 # attribute), mirroring how the real take/return flows dispatch each pose
@@ -1580,6 +1695,7 @@ SLOT_EXECUTE_ACTIONS: Mapping[str, Mapping[str, Tuple[str, str, str]]] = {
         "grasp": ("grasp", "move_l", "grasp_duration_s"),
     },
 }
+SLOT_EXECUTE_ACTIONS["midtakeout_place"] = SLOT_EXECUTE_ACTIONS["place"]
 
 SLOT_EXECUTE_DURATION_MIN_S = 0.5
 SLOT_EXECUTE_DURATION_MAX_S = 10.0
@@ -1596,7 +1712,7 @@ class BookStandSlots:
     already cached by ``prepare`` is refreshed in place too.
     """
 
-    GROUPS = ("place", "preplace")
+    GROUPS = ("place", "preplace", "midtakeout_place")
 
     def __init__(
         self,
@@ -1621,11 +1737,11 @@ class BookStandSlots:
 
     @staticmethod
     def _loader(group: str):
-        return load_book_stand_slots if group == "place" else load_book_stand_pickup_slots
+        return load_book_stand_pickup_slots if group == "preplace" else load_book_stand_slots
 
     @staticmethod
     def _serialize_slot(group: str, plan: Any) -> Dict[str, Any]:
-        if group == "place":
+        if group in ("place", "midtakeout_place"):
             return {
                 "pre_place": list(plan.pre_place.values()),
                 "place": list(plan.place.values()),
@@ -1816,6 +1932,7 @@ class TuningService:
     take: TuningKind
     return_book: TuningKind
     mid_return: TuningKind
+    mid_takeout: TuningKind
     studio: Optional[StudioBackend]
     book_stand: Optional[BookStandSlots] = None
 
@@ -1826,6 +1943,8 @@ class TuningService:
             return self.return_book
         if name == "midreturn":
             return self.mid_return
+        if name == "midtakeout":
+            return self.mid_takeout
         raise KeyError("unknown tuning kind: %s" % name)
 
 
@@ -1870,21 +1989,34 @@ def create_fake_tuning(
         profile_path=store_dir / "midreturn_profile.json",
         preempt=runner.cancel_active,
     )
+    mid_takeout = TuningKind(
+        "midtakeout",
+        plan_getter=lambda: runner.mid_takeout_plan,
+        plan_setter=lambda plan: setattr(runner, "mid_takeout_plan", plan),
+        devices=devices,
+        slots=default_take_slots(),
+        busy_lock=busy_lock,
+        profile_path=store_dir / "midtakeout_profile.json",
+        preempt=runner.cancel_active,
+    )
     return TuningService(
         take=take,
         return_book=return_book,
         mid_return=mid_return,
+        mid_takeout=mid_takeout,
         studio=studio,
         book_stand=BookStandSlots(
             paths={
                 "place": store_dir / "book_stand_slots.json",
                 "preplace": store_dir / "book_stand_pickup_slots.json",
+                "midtakeout_place": store_dir / "midtakeout_book_stand_slots.json",
             },
             live={
                 "place": [take.session._slots],
                 "preplace": [return_book.session._slots, mid_return.session._slots],
+                "midtakeout_place": [mid_takeout.session._slots],
             },
-            sessions=[take.session, return_book.session, mid_return.session],
+            sessions=[take.session, return_book.session, mid_return.session, mid_takeout.session],
             busy_lock=busy_lock,
             arm=devices.arm,
         ),
@@ -1900,6 +2032,7 @@ def create_sdk_tuning(
     busy_lock: threading.Lock,
     book_stand_slots_path: Optional[Path] = None,
     book_stand_pickup_slots_path: Optional[Path] = None,
+    mid_takeout_book_stand_slots_path: Optional[Path] = None,
     preempt: Optional[Callable[[], None]] = None,
 ) -> TuningService:
     """Wire tuning onto the live use cases so profile updates hot-swap them.
@@ -1916,6 +2049,7 @@ def create_sdk_tuning(
     take_use_case = sdk._take_book
     return_use_case = sdk._return_book
     mid_return_use_case = sdk._mid_return
+    mid_takeout_use_case = sdk._mid_takeout
     store_dir = Path(store_dir)
     take = TuningKind(
         "take",
@@ -1947,16 +2081,30 @@ def create_sdk_tuning(
         profile_path=store_dir / "midreturn_profile.json",
         preempt=preempt,
     )
+    mid_takeout = TuningKind(
+        "midtakeout",
+        plan_getter=lambda: mid_takeout_use_case.plan,
+        plan_setter=lambda plan: setattr(mid_takeout_use_case, "plan", plan),
+        devices=devices,
+        slots=mid_takeout_use_case.slots,
+        busy_lock=busy_lock,
+        profile_path=store_dir / "midtakeout_profile.json",
+        preempt=preempt,
+    )
     return TuningService(
         take=take,
         return_book=return_book,
         mid_return=mid_return,
+        mid_takeout=mid_takeout,
         studio=studio,
         book_stand=BookStandSlots(
             paths={
                 "place": Path(book_stand_slots_path or DEFAULT_BOOK_STAND_SLOTS_PATH),
                 "preplace": Path(
                     book_stand_pickup_slots_path or DEFAULT_BOOK_STAND_PICKUP_SLOTS_PATH
+                ),
+                "midtakeout_place": Path(
+                    mid_takeout_book_stand_slots_path or DEFAULT_MID_TAKEOUT_SLOTS_PATH
                 ),
             },
             live={
@@ -1970,8 +2118,12 @@ def create_sdk_tuning(
                     return_book.session._slots,
                     mid_return.session._slots,
                 ],
+                "midtakeout_place": [
+                    mid_takeout_use_case.slots,
+                    mid_takeout.session._slots,
+                ],
             },
-            sessions=[take.session, return_book.session, mid_return.session],
+            sessions=[take.session, return_book.session, mid_return.session, mid_takeout.session],
             busy_lock=busy_lock,
             arm=devices.arm,
         ),
@@ -2101,6 +2253,18 @@ def build_tuning_router(service: TuningService, dependencies: List) -> APIRouter
                 raise HTTPException(
                     status_code=422,
                     detail="%s；目标位姿不可达，请检查偏移量/姿态参数。" % error,
+                ) from error
+            if isinstance(error, RuntimeError) and (
+                "book spine was not detected within" in str(error)
+                or "left-neighbor book spine or its offset depth was not detected within"
+                in str(error)
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "视觉识别失败：%s；请确认书脊模板与实际图书一致、相机视野清晰无遮挡，"
+                        "且目标位置有有效深度。" % error
+                    ),
                 ) from error
             # Device drivers use RuntimeError for rejected feedback, fault
             # codes and arrival checks; SocketCAN itself raises OSError.  None

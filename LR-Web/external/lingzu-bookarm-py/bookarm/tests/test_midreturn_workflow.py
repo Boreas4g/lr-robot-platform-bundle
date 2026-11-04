@@ -56,7 +56,7 @@ class FakeVision:
             confidence=0.9,
             capture_id="capture-mid-1",
         )
-        # Returned on the second and later locate (the post-pickup retarget).
+        # Returned on the second and later locate (the pre-pickup retarget).
         self.retarget = retarget or self.target
 
     def locate_book(self, template):
@@ -132,11 +132,11 @@ ALL_STAGES = [
     "post_vision_align",
     "book_grasp",
     "book_put_back",
-    "book_stand_pickup",
     "vision_retarget",
     "post_vision_retarget_align",
     "insert_target",
     "reachability_check",
+    "book_stand_pickup",
     "shelf_insert",
 ]
 
@@ -198,7 +198,7 @@ class MidReturnBookWorkflowTests(unittest.TestCase):
         self.assertEqual([stage.name for stage in task.result.stages], ALL_STAGES)
         self.assertEqual(lift.commands, [(800.0, 2)])
         # The target book is located twice: once for the grasp chain and once
-        # after the slot pickup for the insert chain.
+        # before the slot pickup for the direct insert chain.
         self.assertEqual(
             vision.calls,
             [
@@ -207,10 +207,33 @@ class MidReturnBookWorkflowTests(unittest.TestCase):
             ],
         )
         self.assertTrue(reservation.released)
-        # Slot pickup entered and left through the collision-checked pre_grasp.
         self.assertIn(("move_to_pose_by_move_j", self.pre_grasp, 4.0), arm.calls)
         self.assertIn(("move_l", self.grasp, 2.0), arm.calls)
-        self.assertIn(("move_l", self.pre_grasp, 2.5), arm.calls)
+        lowered = self.grasp.offset_cm(
+            (0.0, 0.0, -self.plan.pickup_light_close_down_cm)
+        )
+        lowered_call = ("move_l", lowered, 2.0)
+        self.assertIn(lowered_call, arm.calls)
+        pickup_close = [
+            call for call in arm.calls if call[0] == "close_gripper_monitored"
+        ][-1]
+        next_motion = next(
+            call
+            for call in arm.calls[arm.calls.index(pickup_close) + 1 :]
+            if call[0] in {"move_l", "move_to_pose_by_move_j", "move_j"}
+        )
+        self.assertEqual(next_motion, ("move_l", self.pre_grasp, 2.5))
+        pre_insert_motion = next(
+            call
+            for call in arm.calls[arm.calls.index(next_motion) + 1 :]
+            if call[0] in {"move_l", "move_to_pose_by_move_j", "move_j"}
+        )
+        self.assertEqual(pre_insert_motion[0], "move_to_pose_by_move_j")
+        pickup_stage = next(
+            stage for stage in task.result.stages if stage.name == "book_stand_pickup"
+        )
+        self.assertTrue(pickup_stage.details["direct_pre_insert_after_pickup"])
+        self.assertFalse(pickup_stage.details["returned_to_debug_pose_after_pickup"])
         self.assertEqual(
             arm.calls[-1], ("move_j", self.plan.debug_joint, self.plan.debug_duration_s)
         )
@@ -224,8 +247,8 @@ class MidReturnBookWorkflowTests(unittest.TestCase):
         # Fine grasp: vision x +1 cm; the put-back chain anchors on it.
         fine_x = -0.35 + 0.01
         # move_l order: approach, push in, re-push, lower, shift, carry,
-        # forward, slot grasp, slot retreat, insert, push, retract, rotate,
-        # press, press retract.
+        # forward, slot grasp, light-close descent, stand pre-grasp, insert,
+        # push, retract, rotate, press, press retract.
         move_l_poses = [call[1] for call in arm.calls if call[0] == "move_l"]
         self.assertAlmostEqual(move_l_poses[0].x_m, -0.35)
         self.assertAlmostEqual(move_l_poses[1].x_m, fine_x - 0.05)
@@ -241,14 +264,20 @@ class MidReturnBookWorkflowTests(unittest.TestCase):
         # Rod: home, hook, put-back home, insert assist, insert-chain stow.
         # Opens: pickup, partial, full (spreads the gap), partial again
         # (after the shift re-grip), pickup, release; closes: grasp, re-grip,
-        # pickup.
+        # light slot close, and one adaptive persistent hold for the pickup.
         self.assertEqual(
             [call[0] for call in self.rod.calls], [0.0, -70.0, 0.0, 0.0, 0.0]
         )
         opens = [call[1] for call in arm.calls if call[0] == "open_gripper"]
         self.assertEqual(opens, [50.0, 80.0, 50.0, 80.0, 50.0, 50.0])
         closes = [call for call in arm.calls if call[0] == "close_gripper_monitored"]
-        self.assertEqual(len(closes), 3)
+        self.assertEqual(len(closes), 4)
+        self.assertEqual(closes[-2][1].close_deg, self.plan.pickup_light_close_deg)
+        self.assertFalse(closes[-2][1].adaptive_carry)
+        self.assertTrue(closes[-1][1].adaptive_carry)
+        self.assertEqual(closes[-1][1].carry_effort, 0.50)
+        self.assertEqual(closes[-1][1].carry_lead_deg, 2.0)
+        self.assertEqual(closes[-1][1].adaptive_carry_max_effort, 0.60)
 
     def test_insert_target_derives_from_book_target_without_gap_scan(self):
         use_case, arm, _vision, _lift, _reservation = self.build()
@@ -260,9 +289,9 @@ class MidReturnBookWorkflowTests(unittest.TestCase):
         insert_stage = next(stage for stage in task.result.stages if stage.name == "insert_target")
         self.assertAlmostEqual(insert_stage.details["y1_m"], -0.03)
         self.assertAlmostEqual(insert_stage.details["target_y_offset_cm"], 4.0)
-        # Pre-insert flies MovePByJ to the pinned base-frame staging x with
-        # y/z chained off the insert pose; the final insert is a short linear
-        # move. Push x-5; retract x+10 after release.
+        # Pre-insert flies MovePByJ to the IK-searched staging x with y/z
+        # chained off the insert pose; the fake arm reaches every candidate,
+        # so the search stops at the plan cap. Push x-5; retract x+10 after release.
         pose_moves = [
             call
             for call in arm.calls
@@ -575,12 +604,22 @@ class MidReturnReachabilityTests(unittest.TestCase):
         checks = self._checks(arm)
         self.assertEqual(
             [call[1] for call in checks],
-            ["pre_insert", "insert", "push", "retract", "rotate", "press", "press_retract"],
+            [
+                "pre_insert_x_search",
+                "pre_insert",
+                "insert",
+                "push",
+                "retract",
+                "rotate",
+                "press",
+                "press_retract",
+            ],
         )
-        # Seeded from the debug pose (the pickup parks the arm there); each
-        # solved pose seeds the next one.
+        # The x search and first chain pose start from the debug pose; each
+        # solved chain pose then seeds the next one.
         self.assertEqual(checks[0][3], self.plan.debug_joint)
-        for call in checks[1:]:
+        self.assertEqual(checks[1][3], self.plan.debug_joint)
+        for call in checks[2:]:
             self.assertEqual(call[3], arm.check_solution)
         # Probing ran no motion; the insert chain still executes in order.
         insert, push, retract, rotate, press, press_retract = [
@@ -592,7 +631,7 @@ class MidReturnReachabilityTests(unittest.TestCase):
         self.assertAlmostEqual(rotate.x_m, -0.30)
         self.assertAlmostEqual(press.x_m, -0.35)
         self.assertAlmostEqual(press_retract.x_m, -0.30)
-        self.assertEqual(len(self._move_l_calls(arm)), 15)
+        self.assertEqual(len(self._move_l_calls(arm)), 16)
         self.assertEqual(
             task.result.payload["reachability_checked_poses"],
             ["pre_insert", "insert", "push", "retract", "rotate", "press", "press_retract"],
@@ -608,10 +647,11 @@ class MidReturnReachabilityTests(unittest.TestCase):
         self.assertEqual(task.result.stages[-1].name, "reachability_check")
         self.assertIn("arm pose unreachable (push)", task.result.error)
         self.assertIn("IK did not converge", task.result.error)
-        self.assertEqual([call[1] for call in self._checks(arm)], ["pre_insert", "insert", "push"])
-        # Only the nine pre-insert move_l motions ran; nothing moved after the
-        # failed check.
-        self.assertEqual(len(self._move_l_calls(arm)), 9)
+        self.assertEqual(
+            [call[1] for call in self._checks(arm)],
+            ["pre_insert_x_search", "pre_insert", "insert", "push"])
+        # Only the seven neighbor-handling motions ran; pickup never started.
+        self.assertEqual(len(self._move_l_calls(arm)), 7)
         self.assertEqual(arm.calls[-1][0], "check_pose_reachable")
 
     def test_injected_flow_unreachable_fails_before_insert_motions(self):
@@ -632,9 +672,11 @@ class MidReturnReachabilityTests(unittest.TestCase):
         self.assertEqual(task.state, TaskState.FAILED)
         self.assertEqual(task.result.stages[-1].name, "reachability_check")
         self.assertIn("arm pose unreachable (insert)", task.result.error)
-        # Only the stand-pickup move_l pair ran.
+        # The reachability failure happens before the pre_grasp retreat.
         self.assertEqual(len(self._move_l_calls(arm)), 2)
-        self.assertEqual([call[1] for call in self._checks(arm)], ["pre_insert", "insert"])
+        self.assertEqual(
+            [call[1] for call in self._checks(arm)],
+            ["pre_insert_x_search", "pre_insert", "insert"])
 
 
 class MidReturnEmptyGraspTests(unittest.TestCase):
@@ -701,7 +743,9 @@ class MidReturnEmptyGraspTests(unittest.TestCase):
 
     @patch("bookarm.domain.policies.gripper.GRASP_CONTACT_CHECK_ENABLED", True)
     def test_empty_stand_pickup_requires_recovery(self):
-        arm = FakeArm(close_reasons=["object_contact", "object_contact", "timeout"])
+        arm = FakeArm(
+            close_reasons=["object_contact", "object_contact", "object_contact", "timeout"]
+        )
         use_case = self.build(arm)
 
         task = self.run_case(use_case, make_request())

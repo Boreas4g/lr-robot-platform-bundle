@@ -75,7 +75,7 @@ def completed(returncode: int, stderr: str = "") -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(args=[], returncode=returncode, stdout="", stderr=stderr)
 
 
-def test_register_success_invokes_sudo_stage(monkeypatch, vehicle_env, tmp_path) -> None:
+def test_register_success_invokes_sudo_script(monkeypatch, vehicle_env, tmp_path) -> None:
     map_version = make_map_version()
     storage = prepare_source(tmp_path, map_version.id)
     calls: list[list[str]] = []
@@ -89,9 +89,8 @@ def test_register_success_invokes_sudo_stage(monkeypatch, vehicle_env, tmp_path)
     assert registered is True
     assert note is None
     argv = calls[0]
-    assert argv[:3] == ["sudo", "-n", str(vehicle_env[1])]
-    assert argv[3] == "stage"
-    assert "--map-id" in argv and map_version.id in argv
+    assert argv[:4] == ["sudo", "-n", str(vehicle_env[1]), "--map-id"]
+    assert map_version.id in argv
     yaml_arg = argv[argv.index("--map-yaml") + 1]
     assert yaml_arg.startswith("/tmp/")
 

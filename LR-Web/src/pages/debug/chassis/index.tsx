@@ -29,6 +29,7 @@ import {
   getRobotRealtimeState,
   getRobots,
   sendManualJog,
+  setNavigationControlMode,
   subscribeRobotRealtime,
 } from '@/services/libraryRobot';
 import {
@@ -133,6 +134,7 @@ function ManualDrivePanel() {
   const [linearSpeed, setLinearSpeed] = useState(0.1);
   const [angularSpeed, setAngularSpeed] = useState(0.2);
   const [movingTurnOnly, setMovingTurnOnly] = useState(false);
+  const [controlModeSaving, setControlModeSaving] = useState(false);
   const [inputSource, setInputSource] = useState<DriveInputSource>('none');
 
   const driveRobotIdRef = useRef<string | undefined>(undefined);
@@ -150,6 +152,30 @@ function ManualDrivePanel() {
   const lastJogErrorAtRef = useRef(0);
 
   const activeRobot = robots.find((robot) => robot.id === driveRobotId);
+
+  useEffect(() => {
+    const enabled = activeRobot?.navigationControlMode === 'ackermann';
+    movingTurnOnlyRef.current = enabled;
+    setMovingTurnOnly(enabled);
+  }, [activeRobot?.id, activeRobot?.navigationControlMode]);
+
+  async function changeControlMode(mode: 'differential' | 'ackermann') {
+    if (!driveRobotId) return;
+    setControlModeSaving(true);
+    try {
+      const updated = await setNavigationControlMode(driveRobotId, mode);
+      setRobots((current) =>
+        current.map((robot) => (robot.id === updated.id ? updated : robot)),
+      );
+      const enabled = mode === 'ackermann';
+      movingTurnOnlyRef.current = enabled;
+      setMovingTurnOnly(enabled);
+    } catch (error) {
+      message.error(errorMessage(error, '切换导航控制模式失败。'));
+    } finally {
+      setControlModeSaving(false);
+    }
+  }
 
   // 机器人列表：首屏拉取 + 实时通道更新。
   useEffect(() => {
@@ -408,18 +434,17 @@ function ManualDrivePanel() {
           <span>
             <Typography.Text type="secondary">控制方式：</Typography.Text>
             <Select
-              style={{ minWidth: 220 }}
-              value={movingTurnOnly ? 'moving' : 'differential'}
-              onChange={(value: 'differential' | 'moving') => {
-                const enabled = value === 'moving';
-                movingTurnOnlyRef.current = enabled;
-                setMovingTurnOnly(enabled);
-              }}
+              style={{ minWidth: 240 }}
+              value={movingTurnOnly ? 'ackermann' : 'differential'}
+              loading={controlModeSaving}
+              onChange={(value: 'differential' | 'ackermann') =>
+                void changeControlMode(value)
+              }
               options={[
                 { value: 'differential', label: '差速（允许原地转向）' },
-                { value: 'moving', label: '类阿克曼（行进转向）' },
+                { value: 'ackermann', label: '类阿克曼（1 m 行进转向）' },
               ]}
-              disabled={driveEnabled}
+              disabled={driveEnabled || controlModeSaving}
             />
           </span>
           <span>
@@ -534,6 +559,9 @@ export default function ChassisDebugPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [applying, setApplying] = useState(false);
+  const [parameterMode, setParameterMode] = useState<
+    'differential' | 'ackermann'
+  >('differential');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -570,7 +598,15 @@ export default function ChassisDebugPage() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [dirtyCount]);
 
-  const groups = useMemo(() => groupChassisParams(params ?? []), [params]);
+  const groups = useMemo(() => {
+    const visible = (params ?? []).filter((param) => {
+      if (param.key.startsWith('ackermann.'))
+        return parameterMode === 'ackermann';
+      if (param.key.startsWith('nav.')) return parameterMode === 'differential';
+      return true;
+    });
+    return groupChassisParams(visible);
+  }, [params, parameterMode]);
 
   const currentValue = (param: ChassisParam) => draft[param.key] ?? param.value;
 
@@ -664,6 +700,26 @@ export default function ChassisDebugPage() {
         />
       ) : (
         <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+          <Card size="small">
+            <Space wrap>
+              <Typography.Text strong>调参控制方式：</Typography.Text>
+              <Select
+                value={parameterMode}
+                style={{ minWidth: 240 }}
+                onChange={setParameterMode}
+                options={[
+                  { value: 'differential', label: '差速（DWB + Smac 2D）' },
+                  {
+                    value: 'ackermann',
+                    label: '类阿克曼（RPP + Hybrid，1 m）',
+                  },
+                ]}
+              />
+              <Typography.Text type="secondary">
+                显示该模式专用参数及两种模式共用参数。
+              </Typography.Text>
+            </Space>
+          </Card>
           {dirtyCount > 0 && (
             <Alert
               type="warning"

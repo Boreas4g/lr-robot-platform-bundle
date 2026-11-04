@@ -17,6 +17,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/deployment-mode.sh"
+require_local_deployment || exit 1
 # shellcheck source=env.sh
 . "$SCRIPT_DIR/env.sh"
 
@@ -40,9 +42,8 @@ if ! flock -n 9; then
   exit 0
 fi
 
-# Fast DDS shared-memory segments left by a killed ROS process can silently
-# break discovery (Python nodes see each other while C++ nodes vanish). When
-# our stack is fully stopped, clear only those stale segments before starting.
+# Only local PID files belong to this script. DDS shared memory is shared with
+# other ROS processes, including other domains, and must never be unlinked here.
 vehicle_alive=0
 for pidfile in "$RUN_DIR"/*.pid; do
   [ -f "$pidfile" ] || continue
@@ -57,7 +58,6 @@ if ps -eo args | grep -qE '[.]local-stack/ros-install|[d]eploy/local/manual_pose
 fi
 if [ "$vehicle_alive" -eq 0 ]; then
   rm -f "$RUN_DIR"/*.pid
-  rm -f /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_* 2>/dev/null || true
 fi
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 

@@ -80,9 +80,6 @@ class Settings(BaseSettings):
     host_start_agent_socket: str | None = None
     # Private bridge: the API itself has no NetworkManager privileges.
     network_agent_socket: str | None = '/run/lr-network-agent/network.sock'
-    # 机械臂硬件启动确认（运行总览页开关）的持久化文件（纯文本 true/false）；
-    # start-all.sh 在该文件可读时优先于宿主代理单元里的静态 LR_BOOKARM_ALLOW_START。
-    bookarm_start_policy_file: str = "/etc/lr-platform/bookarm-start-policy.conf"
     # On-robot bookarm service (takeout/return workflows) over a private Unix
     # socket; the token matches the daemon's --token when it sets one. Empty
     # means no Authorization header is sent (env LR_BOOKARM_TOKEN).
