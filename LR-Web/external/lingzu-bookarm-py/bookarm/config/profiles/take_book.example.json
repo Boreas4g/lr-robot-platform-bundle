@@ -16,6 +16,7 @@
   "fine_grasp_duration_s": 2.0,
   "post_grasp_duration_s": 2.0,
   "debug_duration_s": 3.0,
+  "return_debug_duration_s": 5.0,
   "joint_tolerance_rad": 0.08,
   "rod_tolerance_deg": 1.5,
   "rod_timeout_s": 12.0,

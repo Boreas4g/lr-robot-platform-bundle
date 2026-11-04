@@ -232,6 +232,33 @@ class TuningServiceTests(unittest.TestCase):
         for actual, wanted_rad in zip(motion["joints_deg"], profile["debug_joint"]):
             self.assertAlmostEqual(actual, math.degrees(wanted_rad))
 
+    def test_take_return_debug_duration_is_independent_and_hot_applied(self):
+        profile = self.client.get("%s/take/profile" % TUNING_URL).json()
+        self.assertEqual(profile["debug_duration_s"], 3.0)
+        self.assertEqual(profile["return_debug_duration_s"], 5.0)
+
+        preview = self.client.get(
+            "%s/take/session/step/preview" % TUNING_URL,
+            params={"step_index": 9},
+        ).json()
+        self.assertEqual(preview["step_name"], "回调试位")
+        self.assertEqual(preview["motion"]["duration_s"], 5.0)
+
+        response = self.client.put(
+            "%s/take/profile" % TUNING_URL,
+            json={"return_debug_duration_s": 7.5},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.runner.take_plan.debug_duration_s, 3.0)
+        self.assertEqual(self.runner.take_plan.return_debug_duration_s, 7.5)
+        reloaded = load_take_book_motion_plan(self.tuning_dir / "take_profile.json")
+        self.assertEqual(reloaded.return_debug_duration_s, 7.5)
+        updated = self.client.get(
+            "%s/take/session/step/preview" % TUNING_URL,
+            params={"step_index": 9},
+        ).json()
+        self.assertEqual(updated["motion"]["duration_s"], 7.5)
+
     def test_step_preview_hides_target_steps_until_prepared(self):
         # Enable first so the non-target steps can run without a prepare.
         enabled = self.client.post("%s/take/arm/enable" % TUNING_URL)

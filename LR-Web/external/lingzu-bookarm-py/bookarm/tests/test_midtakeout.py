@@ -22,6 +22,7 @@ from test_workflows import FakeArm, FakeReservation, _request, _sdk, _slots
 
 
 def test_mid_takeout_full_close_skips_full_open_then_post_grasp_and_debug():
+    plan = MidTakeoutMotionPlan()
     sdk, arm, _reservation = _sdk(arm=FakeArm(enabled=True))
     sdk._mid_takeout = MidTakeoutUseCase(
         task_manager=sdk._task_manager,
@@ -31,7 +32,7 @@ def test_mid_takeout_full_close_skips_full_open_then_post_grasp_and_debug():
         arm=arm,
         rod=sdk._take_book.rod,
         slots=_slots(),
-        plan=MidTakeoutMotionPlan(),
+        plan=plan,
     )
     request = replace(
         _request(stop_after=TakeBookStage.BOOK_GRASP),
@@ -46,7 +47,11 @@ def test_mid_takeout_full_close_skips_full_open_then_post_grasp_and_debug():
     assert len([call for call in arm.calls if call == "close_gripper"]) == 2
     pose_moves = [call for call in arm.calls if call[0] == "move_to_pose_by_move_j"]
     assert pose_moves[-1][1].values() == task.result.payload["post_grasp_base_pose"]
-    assert arm.calls[-1][0] == "move_j"
+    assert arm.calls[-1] == (
+        "move_j",
+        plan.debug_joint,
+        plan.return_debug_duration_s,
+    )
 
 
 def test_mid_takeout_tuning_steps_reuse_the_requested_boundaries():
@@ -91,6 +96,7 @@ def test_mid_takeout_profile_is_independent_and_speed_scales_post_grasp():
         assert plan.post_grasp_offset_cm == (15.0, 2.0, 8.0)
         assert plan.post_grasp_duration_s == 2.0
         assert plan.raise_duration_s == 1.2
+        assert plan.return_debug_duration_s == 1.8
         assert plan.gripper.kp == 40.0
         assert plan.gripper.kd == 3.0
         assert plan.gripper.carry_effort == 0.2

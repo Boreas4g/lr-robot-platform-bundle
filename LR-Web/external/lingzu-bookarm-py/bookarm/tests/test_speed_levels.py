@@ -57,6 +57,7 @@ class ApplySpeedLevelTests(unittest.TestCase):
         # 3-second tier -> 1.8s; 2-second tier -> 1.2s.
         self.assertEqual(plan.zero_duration_s, 1.8)
         self.assertEqual(plan.debug_duration_s, 1.8)
+        self.assertEqual(plan.return_debug_duration_s, 3.0)
         self.assertEqual(plan.pregrasp_duration_s, 1.8)
         self.assertEqual(plan.approach_duration_s, 1.2)
         self.assertEqual(plan.fine_grasp_duration_s, 1.2)

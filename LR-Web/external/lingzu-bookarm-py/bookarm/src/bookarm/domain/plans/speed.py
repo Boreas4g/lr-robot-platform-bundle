@@ -112,6 +112,7 @@ _TAKE_DURATION_FIELDS = (
     "approach_duration_s",
     "fine_grasp_duration_s",
     "debug_duration_s",
+    "return_debug_duration_s",
 )
 _RETURN_DURATION_FIELDS = (
     "zero_duration_s",
@@ -142,7 +143,10 @@ _MID_RETURN_DURATION_FIELDS = (
     "press_duration_s",
     "press_retract_duration_s",
 )
-_MID_TAKEOUT_DURATION_FIELDS = _MID_RETURN_DURATION_FIELDS + ("raise_duration_s",)
+_MID_TAKEOUT_DURATION_FIELDS = _MID_RETURN_DURATION_FIELDS + (
+    "raise_duration_s",
+    "return_debug_duration_s",
+)
 
 
 def validate_speed_level(value: object) -> str:

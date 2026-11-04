@@ -623,8 +623,11 @@ class TuningSession:
             arm.move_j(plan.zero_joint, plan.zero_duration_s)
         arm.move_j(plan.debug_joint, plan.debug_duration_s)
 
-    def _move_debug(self, plan: Any) -> Dict[str, Any]:
-        self._devices.arm.move_j(plan.debug_joint, plan.debug_duration_s)
+    def _move_debug(
+        self, plan: Any, duration_s: Optional[float] = None
+    ) -> Dict[str, Any]:
+        duration = plan.debug_duration_s if duration_s is None else duration_s
+        self._devices.arm.move_j(plan.debug_joint, duration)
         return {"debug_joint_rad": list(plan.debug_joint.values_rad)}
 
     def _move_zero(self, plan: Any) -> Dict[str, Any]:
@@ -870,8 +873,10 @@ class TuningSession:
             TuningStep(
                 "回调试位",
                 False,
-                lambda: self._move_debug(plan),
-                preview=lambda: _joints_step_preview(plan.debug_joint, plan.debug_duration_s),
+                lambda: self._move_debug(plan, plan.return_debug_duration_s),
+                preview=lambda: _joints_step_preview(
+                    plan.debug_joint, plan.return_debug_duration_s
+                ),
             ),
             TuningStep(
                 "书立预放置(pre_place)",

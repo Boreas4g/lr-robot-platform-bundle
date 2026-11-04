@@ -86,6 +86,7 @@ class TakeBookMotionPlan:
     fine_grasp_duration_s: float = 2.0
     post_grasp_duration_s: float = 2.0
     debug_duration_s: float = 3.0
+    return_debug_duration_s: float = 5.0
     joint_tolerance_rad: float = 0.08
     rod_tolerance_deg: float = 1.5
     rod_timeout_s: float = 12.0

@@ -410,9 +410,11 @@ class TakeBookWorkflowTests(unittest.TestCase):
             "arm_post_grasp",
             "arm_return_debug",
         ]
+        plan = TakeBookMotionPlan(debug_duration_s=2.0, return_debug_duration_s=6.5)
         sdk, arm, _reservation = _sdk(
             arm=FakeArm(enabled=True),
             slots={},
+            plan=plan,
             grasp_step_approval=lambda step: approvals.append(step) is None or True,
         )
 
@@ -423,6 +425,9 @@ class TakeBookWorkflowTests(unittest.TestCase):
         self.assertEqual(task.result.payload["grasp_steps_completed"], expected_steps)
         self.assertTrue(task.result.payload["grasp_step_mode"])
         self.assertIn("close_gripper", arm.calls)
+        self.assertEqual(
+            arm.calls[-1], ("move_j", plan.debug_joint, plan.return_debug_duration_s)
+        )
 
     def test_book_grasp_opens_gripper_through_arm_port_at_fifty_degrees(self):
         profile_command = GripperCommand(open_deg=5.0, open_speed_deg_s=1.0, kp=99.0, kd=4.0)

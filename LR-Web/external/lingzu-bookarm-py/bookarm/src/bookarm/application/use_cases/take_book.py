@@ -283,7 +283,7 @@ class TakeBookUseCase:
             ),
             ("close_gripper", lambda: self._close_gripper_checked(plan.gripper)),
             ("arm_post_grasp", lambda: self.arm.move_to_pose_by_move_j(post_grasp, plan.post_grasp_duration_s)),
-            ("arm_return_debug", lambda: self.arm.move_j(plan.debug_joint, plan.debug_duration_s)),
+            ("arm_return_debug", lambda: self.arm.move_j(plan.debug_joint, plan.return_debug_duration_s)),
         )
         completed_steps = []
         for name, action in steps:

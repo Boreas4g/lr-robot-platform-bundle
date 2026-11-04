@@ -45,7 +45,7 @@ class MidTakeoutUseCase(TakeBookUseCase):
         post_grasp = poses["arm_post_grasp"]
         self.arm.move_to_pose_by_move_j(post_grasp, plan.post_grasp_duration_s)
         self.engine.raise_if_cancelled(task)
-        self.arm.move_j(plan.debug_joint, plan.debug_duration_s)
+        self.arm.move_j(plan.debug_joint, plan.return_debug_duration_s)
         return {
             "mid_takeout": True,
             "pregrasp_base_pose": grasp["pregrasp_base_pose"],

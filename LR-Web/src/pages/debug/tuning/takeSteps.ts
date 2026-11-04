@@ -263,8 +263,8 @@ export const takeSteps: TuningStepDef[] = [
   },
   {
     title: '回调试位',
-    hint: '复用「调试位」卡片的关节角与运动时长。',
-    fields: [],
+    hint: '复用「调试位」卡片的关节角，执行时间可独立调整。',
+    fields: [durationField('return_debug_duration_s', '执行时间')],
   },
   { title: '书立预放置', fields: [] },
   { title: '书立放置', fields: [] },

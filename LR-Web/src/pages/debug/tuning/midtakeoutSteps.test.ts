@@ -19,6 +19,9 @@ describe('中位取书调参步骤', () => {
     ]);
     expect(midtakeoutSteps[13].title).toBe('完全闭合夹爪');
     expect(midtakeoutSteps.slice(14)).toEqual(takeSteps.slice(8));
+    expect(midtakeoutSteps[15].fields.map((field) => field.path)).toContain(
+      'return_debug_duration_s',
+    );
   });
 
   it('下降步骤支持六维偏移', () => {

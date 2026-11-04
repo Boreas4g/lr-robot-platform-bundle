@@ -21,3 +21,4 @@ class MidTakeoutMotionPlan(MidReturnMotionPlan):
     post_grasp_offset_cm: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     post_grasp_rpy_offset_deg: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     post_grasp_duration_s: float = 2.0
+    return_debug_duration_s: float = 3.0
