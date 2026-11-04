@@ -22,6 +22,7 @@ describe('中位取书调参步骤', () => {
     expect(midtakeoutSteps[15].fields.map((field) => field.path)).toContain(
       'return_debug_duration_s',
     );
+    expect(takeSteps[9].fields[0].fallback).toBe(5);
   });
 
   it('下降步骤支持六维偏移', () => {
