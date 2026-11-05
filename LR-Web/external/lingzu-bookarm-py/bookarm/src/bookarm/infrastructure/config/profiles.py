@@ -25,9 +25,23 @@ def load_return_book_motion_plan(path: Path) -> ReturnBookMotionPlan:
     """Load a return-book plan and reject unknown or malformed fields."""
 
     source = dict(_read_json(path, "return-book profile"))
-    # Deliberate migration: profiles written while the pre-insert x was a
-    # pinned plan field still carry it; the x is now IK-searched per target.
-    source.pop("pre_insert_x_m", None)
+    # Deliberate migration: retired position fields are ignored; steps 7-9
+    # use target-relative XY offsets and absolute arm-base z values.
+    for legacy_name in (
+        "pre_insert_x_m",
+        "pre_insert_x_max_m",
+        "target_y_offset_cm",
+        "insert_offset_cm",
+        "min_insert_z_m",
+        "pre_insert_y_offset_cm",
+        "pre_insert_z_offset_cm",
+        "push_x_offset_cm",
+        "push_z_offset_cm",
+        "pre_insert_position_m",
+        "insert_position_m",
+        "push_position_m",
+    ):
+        source.pop(legacy_name, None)
     gripper_value = source.get("gripper", {})
     if not isinstance(gripper_value, Mapping):
         raise ValueError("return-book profile gripper must be an object")
@@ -47,30 +61,27 @@ def load_return_book_motion_plan(path: Path) -> ReturnBookMotionPlan:
         source.get("debug_joint", defaults.debug_joint.values_rad), "debug_joint"
     )
     for name in (
-        "insert_offset_cm",
+        "pre_insert_xy_offset_m",
+        "insert_xy_offset_m",
+        "push_xy_offset_m",
+    ):
+        values[name] = _pair(source.get(name, getattr(defaults, name)), name)
+    for name in ("pre_insert_z_m", "insert_z_m", "push_z_m"):
+        value = float(source.get(name, getattr(defaults, name)))
+        if not math.isfinite(value):
+            raise ValueError("%s must be finite" % name)
+        values[name] = value
+    for name in (
+        "pickup_light_close_rpy_offset_deg",
+        "pre_insert_rpy_deg",
         "insert_rpy_deg",
         "push_rpy_deg",
         "retract_rpy_deg",
     ):
         values[name] = _triple(source.get(name, getattr(defaults, name)), name)
-    for name in ("pre_insert_y_offset_cm", "pre_insert_z_offset_cm"):
-        offset = float(source.get(name, getattr(defaults, name)))
-        if not math.isfinite(offset) or abs(offset) > 50.0:
-            raise ValueError("%s must be within +/-50.0 cm" % name)
-        values[name] = offset
-    pre_insert_x_max_m = float(source.get("pre_insert_x_max_m", defaults.pre_insert_x_max_m))
-    # Negative, and not below the IK search floor (the bounds mirror
-    # application.use_cases.mid_return's PRE_INSERT_X_SEARCH_MIN_M/-0.01,
-    # duplicated here as plain numbers to keep the loader import-free).
-    if not math.isfinite(pre_insert_x_max_m) or not -0.80 <= pre_insert_x_max_m <= -0.01:
-        raise ValueError("pre_insert_x_max_m must be between -0.80 and -0.01 metres")
-    values["pre_insert_x_max_m"] = pre_insert_x_max_m
-    target_y_offset_cm = float(
-        source.get("target_y_offset_cm", defaults.target_y_offset_cm)
+    values["rod_home_deg"] = _rod_angle(
+        source.get("rod_home_deg", defaults.rod_home_deg), "rod_home_deg"
     )
-    if not math.isfinite(target_y_offset_cm) or abs(target_y_offset_cm) > 50.0:
-        raise ValueError("target_y_offset_cm must be within +/-50.0 cm")
-    values["target_y_offset_cm"] = target_y_offset_cm
     values["gripper"] = GripperCommand(**dict(gripper_value))
     values["speed_level"] = validate_speed_level(
         source.get("speed_level", DEFAULT_SPEED_LEVEL)
@@ -129,9 +140,19 @@ def _mid_plan_values(
     gripper_value = source.get("gripper", {})
     if not isinstance(gripper_value, Mapping):
         raise ValueError("mid-return profile gripper must be an object")
-    legacy_pre_insert_x = source.pop("pre_insert_x_m", None)
-    if legacy_pre_insert_x is not None and "pre_insert_x_max_m" not in source:
-        source["pre_insert_x_max_m"] = legacy_pre_insert_x
+    for legacy_name in (
+        "pre_insert_x_m",
+        "pre_insert_x_max_m",
+        "target_y_offset_cm",
+        "insert_offset_cm",
+        "min_insert_z_m",
+        "pre_insert_y_offset_cm",
+        "pre_insert_z_offset_cm",
+        "push_x_offset_cm",
+        "push_z_offset_cm",
+        "rod_insert_deg",
+    ):
+        source.pop(legacy_name, None)
     legacy_forward_cm = source.pop("pickup_light_close_forward_cm", None)
     if legacy_forward_cm is not None and "pickup_light_close_down_cm" not in source:
         source["pickup_light_close_down_cm"] = legacy_forward_cm
@@ -158,11 +179,25 @@ def _mid_plan_values(
         "approach_offset_cm",
         "fine_grasp_offset_cm",
         "fine_grasp_rpy_deg",
-        "insert_offset_cm",
+        "pickup_light_close_rpy_offset_deg",
+        "pre_insert_rpy_deg",
         "insert_rpy_deg",
+        "push_rpy_deg",
+        "retract_rpy_deg",
         "rotate_rpy_deg",
     ):
         values[name] = _triple(source.get(name, getattr(defaults, name)), name)
+    for name in (
+        "pre_insert_xy_offset_m",
+        "insert_xy_offset_m",
+        "push_xy_offset_m",
+    ):
+        values[name] = _pair(source.get(name, getattr(defaults, name)), name)
+    for name in ("pre_insert_z_m", "insert_z_m", "push_z_m"):
+        value = float(source.get(name, getattr(defaults, name)))
+        if not math.isfinite(value):
+            raise ValueError("%s must be finite" % name)
+        values[name] = value
     values["rod_grasp_deg"] = _rod_angle(
         source.get("rod_grasp_deg", defaults.rod_grasp_deg), "rod_grasp_deg"
     )
@@ -172,26 +207,10 @@ def _mid_plan_values(
     values["rod_putback_deg"] = _rod_angle(
         source.get("rod_putback_deg", defaults.rod_putback_deg), "rod_putback_deg"
     )
-    values["rod_insert_deg"] = _rod_angle(
-        source.get("rod_insert_deg", defaults.rod_insert_deg), "rod_insert_deg"
+    values["pickup_rod_home_deg"] = _rod_angle(
+        source.get("pickup_rod_home_deg", defaults.pickup_rod_home_deg),
+        "pickup_rod_home_deg",
     )
-    pre_insert_x_max_m = float(
-        source.get("pre_insert_x_max_m", defaults.pre_insert_x_max_m)
-    )
-    if not math.isfinite(pre_insert_x_max_m) or not -0.80 <= pre_insert_x_max_m <= -0.01:
-        raise ValueError("pre_insert_x_max_m must be between -0.80 and -0.01 metres")
-    values["pre_insert_x_max_m"] = pre_insert_x_max_m
-    for name in ("pre_insert_y_offset_cm", "pre_insert_z_offset_cm"):
-        offset = float(source.get(name, getattr(defaults, name)))
-        if not math.isfinite(offset) or abs(offset) > 50.0:
-            raise ValueError("%s must be within +/-50.0 cm" % name)
-        values[name] = offset
-    target_y_offset_cm = float(
-        source.get("target_y_offset_cm", defaults.target_y_offset_cm)
-    )
-    if not math.isfinite(target_y_offset_cm) or abs(target_y_offset_cm) > 50.0:
-        raise ValueError("target_y_offset_cm must be within +/-50.0 cm")
-    values["target_y_offset_cm"] = target_y_offset_cm
     values["gripper"] = replace(defaults.gripper, **dict(gripper_value))
     values["speed_level"] = validate_speed_level(
         source.get("speed_level", DEFAULT_SPEED_LEVEL)
@@ -285,6 +304,11 @@ def _joint(value: Any, name: str) -> JointPose:
         return JointPose.from_values(_triple_or_six(value, name, 6))
     except (TypeError, ValueError) as error:
         raise ValueError("%s is invalid: %s" % (name, error)) from error
+
+
+def _pair(value: Any, name: str) -> Tuple[float, float]:
+    values = _triple_or_six(value, name, 2)
+    return (float(values[0]), float(values[1]))
 
 
 def _triple(value: Any, name: str) -> Tuple[float, float, float]:

@@ -20,14 +20,11 @@ class MidReturnMotionPlan:
     home the rod, then lower/shift/re-close/re-open/forward to clear the
     gripper out and return to the debug pose. Stage three re-locates the
     target book, then picks the return book from the calibrated stand slot.
-    Stage four computes insert Y1 from that fresh target and moves directly
-    from the stand grasp to pre-insert without returning to debug
-    (Y1 = target grasp y + the plan's target_y_offset_cm; the
-    depth gap scan is no longer run in the automated workflow), inserts the
-    book at y=Y1 with x/z reused from the fresh vision target, pushes
-    it in along x, partially opens the gripper and retracts along x, then
-    rotates the empty gripper at the retract pose, presses the book spines
-    flush along x and retracts again before returning to the debug pose.
+    Stage four uses the end-return sequence through the first retract, then
+    rotates the empty gripper, presses the book spines, retracts again, and
+    returns to debug. The pre-insert, insert, and push steps use recognized
+    target XY plus per-step XY offsets and absolute arm-base Z values, with
+    independent attitudes.
 
     All single-axis shifts are expressed as absolute poses chained off the
     cached vision target, so re-running one step stays idempotent.
@@ -46,9 +43,10 @@ class MidReturnMotionPlan:
     debug_duration_s: float = 3.0
     # Open the gripper this far before the grasp chain / the book-slot pickup.
     pickup_open_deg: float = 50.0
-    # Lightly close at the slot, then move down along Z before the full grasp.
+    # Lightly close, then adjust depth and attitude from the measured TCP before the full grasp.
     pickup_light_close_deg: float = 70.0
     pickup_light_close_down_cm: float = 1.0
+    pickup_light_close_rpy_offset_deg: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     # Grasp phase, mirroring the take-book offsets with mid-return defaults.
     pregrasp_offset_cm: Tuple[float, float, float] = (10.0, 0.0, 0.0)
     grasp_rpy_deg: Tuple[float, float, float] = (75.0, 0.0, 90.0)
@@ -61,14 +59,11 @@ class MidReturnMotionPlan:
     rod_grasp_deg: float = -70.0
     # Home/stow position the rod returns to before and after hooking.
     rod_home_deg: float = 0.0
-    # Put-back phase (推杆归位 step): rod target after the re-push, before the
-    # lower/shift clear-out chain. Independent of rod_home_deg.
+    # Put-back phase (step 11): rod target after the re-push, before the
+    # lower/shift clear-out chain. Independent of the other rod positions.
     rod_putback_deg: float = 0.0
-    # Insert phase (推杆 step): rod target after the stand pickup, before the
-    # insert chain — extends the rod to assist the shelf insert. Default 0.0
-    # keeps the rod at its put-back position (no physical change). The rod
-    # returns to rod_putback_deg right after 推回书架, before the release.
-    rod_insert_deg: float = 0.0
+    # Book-stand pickup phase: independent rod target before closing.
+    pickup_rod_home_deg: float = 0.0
     rod_speed: int = 1000
     rod_acceleration: int = 50
     rod_tolerance_deg: float = 1.5
@@ -93,47 +88,29 @@ class MidReturnMotionPlan:
     carry_forward_duration_s: float = 2.0
     forward_x_offset_cm: float = 10.0
     forward_duration_s: float = 2.0
-    # Insert Y1 = first-round target grasp y + this offset (cm). The automated
-    # workflow and the tuning session both read it from this plan, so it is
-    # tuned here rather than passed per request.
-    target_y_offset_cm: float = 4.0
-    # Insert pose: x/z reused from the fresh vision target and y=Y1,
-    # then shifted by this base-frame offset; orientation is insert_rpy_deg.
-    # rx beyond ~95 deg is outside the workspace at deep-shelf targets.
-    insert_offset_cm: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    # Insert chain matches end-return: recognized target XY plus per-step XY
+    # offsets, independent absolute arm-base Z, and independent attitudes.
+    pre_insert_xy_offset_m: Tuple[float, float] = (0.30, 0.04)
+    pre_insert_z_m: float = 0.04
+    insert_xy_offset_m: Tuple[float, float] = (0.0, 0.04)
+    insert_z_m: float = 0.04
+    push_xy_offset_m: Tuple[float, float] = (-0.05, 0.04)
+    push_z_m: float = 0.04
+    pre_insert_rpy_deg: Tuple[float, float, float] = (95.0, 0.0, 90.0)
     insert_rpy_deg: Tuple[float, float, float] = (95.0, 0.0, 90.0)
-    # Reachability floor for the insert z (arm-base frame): at insert_rpy_deg
-    # the wrist runs into joint limits below ~0.25 m, so targets lower than
-    # this are clamped up to the reachable minimum instead of failing IK.
-    min_insert_z_m: float = 0.25
-    # Pre-insert staging pose, flown MovePByJ before the final MoveL approach
-    # so the book never sweeps across the stand neighbours. Its x is computed
-    # per target by an IK search for the numerically greatest reachable value
-    # (see application.use_cases.mid_return.search_pre_insert_x), using the
-    # fresh insert pose and the y/z offsets below. The cap keeps the search
-    # out of the near-body flip zone.
-    pre_insert_x_max_m: float = -0.33
-    pre_insert_y_offset_cm: float = 0.0
-    pre_insert_z_offset_cm: float = 0.0
     pre_insert_duration_s: float = 3.0
     insert_duration_s: float = 3.0
-    # Push the book into the shelf from the insert pose: x drives further in
-    # (negative); z optionally nudges the book up/down while pushing (default
-    # 0 keeps the insert height; 末尾还书还有 push_rpy_deg 姿态旋钮，中位还书
-    # 没有，共享插入链按字段是否存在分支）。
-    push_x_offset_cm: float = -5.0
-    push_z_offset_cm: float = 0.0
+    push_rpy_deg: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     push_duration_s: float = 2.0
     # Partially open the gripper to release the book (not the full stroke).
     release_open_deg: float = 50.0
-    # Retract from the push pose: only x changes (positive x leaves the shelf).
+    # Retract from the push pose: x changes (positive leaves the shelf), with
+    # the same fixed safe attitude as end-return instead of inheriting push.
     retract_x_offset_cm: float = 10.0
+    retract_rpy_deg: Tuple[float, float, float] = (90.0, 0.0, 90.0)
     retract_duration_s: float = 2.0
-    # 回抽后的压书收尾链（中位还书专用，末尾还书没有这三个字段，共享插入链
-    # 按字段是否存在分支）：先在回抽位原地转腕（相对回抽姿态的 rx/ry/rz
-    # 偏移，默认绕 Y 转 90°；可同时叠加 z 偏移升降，默认 0 位置不变），
-    # 再把闭合的空爪沿 x 推回架内压平书脊（负值向架内），最后沿 x 回抽
-    # 撤离（正值向架外）。
+    # Rotate at the retract pose, press the book spines along x, then retract
+    # the empty gripper again. Rotation attitude is relative to the retract pose.
     rotate_rpy_deg: Tuple[float, float, float] = (0.0, 90.0, 0.0)
     rotate_z_offset_cm: float = 0.0
     rotate_duration_s: float = 2.0

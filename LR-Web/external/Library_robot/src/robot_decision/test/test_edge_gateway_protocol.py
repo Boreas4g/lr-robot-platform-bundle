@@ -254,7 +254,7 @@ def test_parse_shelf_move_command_uses_the_same_validated_map_target() -> None:
     command = parse_gateway_command(
         (
             '{"commandId":"CMD-SHELF-001","robotId":"LR-01","command":"shelf_move",'
-            '"payload":{"x":1.2,"y":-0.8,"yaw":0.0,"speedMps":0.08},"expiresAt":"'
+            '"payload":{"x":1.2,"y":-0.8,"yaw":0.0,"speedMps":0.08,"xToleranceM":0.02},"expiresAt":"'
             + expires_at.isoformat()
             + '","safetyLevel":"high"}'
         ).encode(),
@@ -265,6 +265,7 @@ def test_parse_shelf_move_command_uses_the_same_validated_map_target() -> None:
     target = parse_fine_tune(command.payload, min_x=-2.0, max_x=2.0, min_y=-2.0, max_y=2.0, max_abs_yaw=6.284)
     assert (target.x, target.y, target.yaw) == (1.2, -0.8, 0.0)
     assert target.speed_mps == pytest.approx(0.08)
+    assert target.x_tolerance_m == pytest.approx(0.02)
 
 
 def test_parse_shelf_move_speed_allows_zero_to_half_metre_per_second() -> None:

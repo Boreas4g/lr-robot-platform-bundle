@@ -368,7 +368,7 @@ class ChassisParamsApiTests(unittest.TestCase):
         self.assertAlmostEqual(params["ackermann.minimum_turning_radius"]["value"], 1.0)
         self.assertAlmostEqual(params["ackermann.desired_linear_vel"]["value"], 0.20)
         self.assertAlmostEqual(params["smoother.max_velocity.theta"]["value"], 0.8)
-        self.assertAlmostEqual(params["tf.front.x"]["value"], 0.235)
+        self.assertAlmostEqual(params["tf.front.x"]["value"], 0.25)
         self.assertAlmostEqual(params["tf.back.yaw"]["value"], -2.3561944901)
         self.assertAlmostEqual(params["body.length_m"]["value"], 0.58)
         self.assertAlmostEqual(params["body.width_m"]["value"], 0.58)
@@ -465,7 +465,7 @@ class ChassisParamsApiTests(unittest.TestCase):
         launch_text = self.launch.read_text(encoding="utf-8")
         self.assertIn('"0.25",', launch_text)
         self.assertIn('"-2.4",', launch_text)
-        self.assertIn('"-0.235",', launch_text)  # back laser untouched
+        self.assertIn('"-0.25",', launch_text)  # back laser untouched
 
         refreshed = response.json()["params"]
         values = {item["key"]: item["value"] for item in refreshed}

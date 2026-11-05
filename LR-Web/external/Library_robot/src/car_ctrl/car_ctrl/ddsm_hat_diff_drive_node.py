@@ -286,7 +286,7 @@ class DDSMHatDiffDriveNode(Node):
         self.declare_parameter("init_hat", True)
         self.declare_parameter("log_serial_tx", False)
         self.declare_parameter("log_serial_rx", False)
-        self.declare_parameter("per_motor_command_gap", 0.003)
+        self.declare_parameter("per_motor_command_gap", 0.0)
         self.declare_parameter("feedback_log_rate_hz", 0.0)
         self.declare_parameter("rs485_serial_timeout", 0.02)
         self.declare_parameter("rs485_response_timeout", 0.08)
@@ -659,7 +659,7 @@ class DDSMHatDiffDriveNode(Node):
 
     def _send_batch(self, commands: List[Dict[str, int]]) -> List[MotorFeedback]:
         # HAT 固件在一次写入多条 JSON 时可能只返回最后一条命令的反馈。
-        # 逐个电机发送并留出极短间隔，便于读取 1/2/3/4 四个电机的返回转速。
+        # 逐个电机发送；per_motor_command_gap 可配置额外间隔，默认连续发送。
         with self._driver_lock:
             driver = self._driver
         if driver is None:

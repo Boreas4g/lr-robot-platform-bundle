@@ -90,7 +90,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(sorted(slots), expected)
         self.assertEqual(len(slots[1].grasp.values()), 6)
 
-    def test_return_book_profile_loads_offsets_and_release_angle(self):
+    def test_return_book_profile_loads_positions_and_release_angle(self):
         path = (
             Path(__file__).resolve().parents[1]
             / "config"
@@ -100,14 +100,21 @@ class ConfigurationTests(unittest.TestCase):
 
         plan = load_return_book_motion_plan(path)
 
-        self.assertEqual(plan.target_y_offset_cm, 4.0)
-        self.assertEqual(plan.insert_offset_cm, (0.0, 0.0, 0.0))
+        self.assertEqual(plan.pre_insert_xy_offset_m, (0.30, 0.04))
+        self.assertEqual(plan.pre_insert_z_m, 0.04)
+        self.assertEqual(plan.insert_xy_offset_m, (0.0, 0.04))
+        self.assertEqual(plan.insert_z_m, 0.04)
+        self.assertEqual(plan.push_xy_offset_m, (-0.05, 0.04))
+        self.assertEqual(plan.push_z_m, 0.04)
+        self.assertEqual(plan.rod_home_deg, 0.0)
+        self.assertEqual(plan.rod_speed, 1000)
+        self.assertEqual(plan.rod_acceleration, 50)
+        self.assertEqual(plan.rod_tolerance_deg, 1.5)
+        self.assertEqual(plan.rod_timeout_s, 12.0)
+        self.assertEqual(plan.pre_insert_rpy_deg, (95.0, 0.0, 90.0))
         self.assertEqual(plan.insert_rpy_deg, (95.0, 0.0, 90.0))
-        self.assertEqual(plan.min_insert_z_m, 0.25)
-        self.assertEqual(plan.pre_insert_x_max_m, -0.2)
         self.assertEqual(plan.pickup_open_deg, 50.0)
         self.assertEqual(plan.release_open_deg, 50.0)
-        self.assertEqual(plan.push_x_offset_cm, -5.0)
         self.assertEqual(plan.push_rpy_deg, (0.0, 0.0, 0.0))
         self.assertEqual(plan.retract_x_offset_cm, 10.0)
         self.assertEqual(plan.retract_rpy_deg, (90.0, 0.0, 90.0))
@@ -116,40 +123,48 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(plan.retract_duration_s, 2.0)
         self.assertEqual(plan.gripper.close_deg, 108.5)
 
-    def test_return_book_profile_ignores_the_legacy_pre_insert_x(self):
-        # Profiles written while the pre-insert x was a pinned field still
-        # carry the key; the loader drops it instead of rejecting the file.
+    def test_return_book_profile_ignores_legacy_target_relative_fields(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "return.json"
             path.write_text(
-                json.dumps({"pre_insert_x_m": -0.31, "target_y_offset_cm": 5.0}),
+                json.dumps(
+                    {
+                        "pre_insert_x_m": -0.31,
+                        "pre_insert_x_max_m": -0.25,
+                        "target_y_offset_cm": 5.0,
+                        "insert_offset_cm": [1.0, 2.0, 3.0],
+                        "min_insert_z_m": 0.3,
+                        "pre_insert_y_offset_cm": 1.0,
+                        "pre_insert_z_offset_cm": 2.0,
+                        "push_x_offset_cm": -6.0,
+                        "push_z_offset_cm": 3.0,
+                        "insert_position_m": [-0.4, 0.1, 0.3],
+                        "insert_xy_offset_m": [0.02, 0.07],
+                        "insert_z_m": 0.28,
+                    }
+                ),
                 encoding="utf-8",
             )
 
             plan = load_return_book_motion_plan(path)
 
-        self.assertFalse(hasattr(plan, "pre_insert_x_m"))
-        self.assertEqual(plan.target_y_offset_cm, 5.0)
-
-    def test_return_book_profile_validates_pre_insert_x_max(self):
-        with tempfile.TemporaryDirectory() as directory:
-            for name, payload in (
-                ("zero.json", {"pre_insert_x_max_m": 0.0}),
-                ("positive.json", {"pre_insert_x_max_m": 0.1}),
-                ("below_floor.json", {"pre_insert_x_max_m": -0.9}),
-            ):
-                path = Path(directory) / name
-                path.write_text(json.dumps(payload), encoding="utf-8")
-                with self.assertRaisesRegex(ValueError, "pre_insert_x_max_m"):
-                    load_return_book_motion_plan(path)
-
-            # Absence loads the dataclass default; an in-range value wins.
-            absent = Path(directory) / "absent.json"
-            absent.write_text(json.dumps({}), encoding="utf-8")
-            self.assertEqual(load_return_book_motion_plan(absent).pre_insert_x_max_m, -0.20)
-            ok = Path(directory) / "ok.json"
-            ok.write_text(json.dumps({"pre_insert_x_max_m": -0.25}), encoding="utf-8")
-            self.assertEqual(load_return_book_motion_plan(ok).pre_insert_x_max_m, -0.25)
+        self.assertEqual(plan.insert_xy_offset_m, (0.02, 0.07))
+        self.assertEqual(plan.insert_z_m, 0.28)
+        for legacy_name in (
+            "pre_insert_x_m",
+            "pre_insert_x_max_m",
+            "target_y_offset_cm",
+            "insert_offset_cm",
+            "min_insert_z_m",
+            "pre_insert_y_offset_cm",
+            "pre_insert_z_offset_cm",
+            "push_x_offset_cm",
+            "push_z_offset_cm",
+            "pre_insert_position_m",
+            "insert_position_m",
+            "push_position_m",
+        ):
+            self.assertFalse(hasattr(plan, legacy_name))
 
     def test_return_book_profile_accepts_and_validates_push_rpy_deg(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1980,7 +1980,7 @@ class DeviceStackTests(unittest.TestCase):
         self.assertTrue(result["carry_hold"])
         self.assertTrue(result["adaptive_carry"])
         self.assertEqual(result["carry_effort"], 0.35)
-        self.assertEqual(result["carry_max_effort"], 0.50)
+        self.assertEqual(result["carry_max_effort"], 0.60)
         self.assertTrue(status["armed"])
         self.assertTrue(status["adaptive"])
         self.assertEqual(status["recovery_count"], 0)

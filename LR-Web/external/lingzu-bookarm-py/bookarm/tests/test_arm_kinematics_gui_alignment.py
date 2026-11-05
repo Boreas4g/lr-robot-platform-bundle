@@ -63,6 +63,21 @@ class KinematicsGuiAlignmentTests(unittest.TestCase):
         self.assertGreaterEqual(solution.values_rad[1], 0.0)
         self.assertLessEqual(solution.values_rad[2], 0.0)
 
+    def test_already_converged_solutions_clamp_slightly_out_of_limit_feedback(self) -> None:
+        values = list(BOOK_DEBUG_JOINT.values_rad)
+        values[5] = -1.5715
+        seed = JointPose.from_values(values)
+        target = self.kinematics.forward_kinematics(seed)
+
+        solution = self.kinematics.inverse_kinematics(target, seed, joint_limit_margin=0.0)
+        step, error_norm = self.kinematics.ik_step(target, seed)
+
+        self.assertIsNotNone(solution)
+        self.assertLess(error_norm, 3e-4)
+        for result in (solution, step):
+            self.assertGreaterEqual(result.values_rad[5], DEFAULT_JOINT_LIMITS[6][0])
+            self.assertLessEqual(result.values_rad[5], DEFAULT_JOINT_LIMITS[6][1])
+
     def test_linear_pose_uses_shortest_rotation_path(self) -> None:
         start = BasePose(0.0, 0.0, 0.0, 0.0, 0.0, math.radians(179.0))
         target = BasePose(1.0, 0.0, 0.0, 0.0, 0.0, math.radians(-179.0))

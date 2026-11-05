@@ -111,6 +111,7 @@ import {
   type MapViewTransform,
   MIN_MAP_SCALE,
   mapCoordsFromPixel,
+  mapCoordsWithinMap,
   mapLayerTransform,
   mapPixelFromClientPoint,
   mapPixelFromMapCoords,
@@ -266,6 +267,7 @@ export default function LibraryMapPage() {
   const [locOverlayEnabled, setLocOverlayEnabled] = useState(false);
   const [locOverlay, setLocOverlay] = useState<MappingLocOverlay>();
   const locOverlayWarnedAtRef = useRef(0);
+  const [worldOriginEnabled, setWorldOriginEnabled] = useState(false);
 
   const robotCurrentMapId = useMemo(
     () => robots.find((item) => item.status !== 'offline' && item.mapId)?.mapId,
@@ -278,6 +280,9 @@ export default function LibraryMapPage() {
       mapVersions[0],
     [mapVersions, selectedId, robotCurrentMapId],
   );
+  const worldOriginInMap = selectedMap
+    ? mapCoordsWithinMap(selectedMap, { x: 0, y: 0 })
+    : false;
   const mapRobots = useMemo(
     () => robots.filter((item) => item.mapId === selectedMap?.id),
     [robots, selectedMap?.id],
@@ -1671,7 +1676,28 @@ export default function LibraryMapPage() {
             }
             extra={
               selectedMap ? (
-                <Space size={8}>
+                <Space size={8} wrap>
+                  <Tooltip
+                    title={
+                      worldOriginInMap
+                        ? '世界原点：(0, 0) m，朝向 +X（0°）'
+                        : '世界原点不在当前地图范围内。'
+                    }
+                  >
+                    <span>
+                      <Switch
+                        aria-label="显示世界原点"
+                        checked={worldOriginEnabled}
+                        onChange={setWorldOriginEnabled}
+                      />
+                    </span>
+                  </Tooltip>
+                  <span>显示世界原点</span>
+                  {worldOriginEnabled && !worldOriginInMap ? (
+                    <Typography.Text type="warning">
+                      原点超出地图
+                    </Typography.Text>
+                  ) : null}
                   <Tooltip
                     title={
                       locOverlayRobot
@@ -1759,6 +1785,7 @@ export default function LibraryMapPage() {
               annotationMode={annotationMode}
               localizationMode={Boolean(localizationModeRobotId)}
               loading={previewLoading || loading}
+              showWorldOrigin={worldOriginEnabled && worldOriginInMap}
               locOverlayPoints={
                 locOverlayEnabled ? locOverlay?.points : undefined
               }
@@ -2607,6 +2634,7 @@ function MapPreview({
   annotationMode,
   localizationMode,
   loading,
+  showWorldOrigin,
   locOverlayPoints,
   onAnnotationClick,
   onAnnotationMove,
@@ -2620,6 +2648,7 @@ function MapPreview({
   annotationMode: boolean;
   localizationMode: boolean;
   loading: boolean;
+  showWorldOrigin: boolean;
   locOverlayPoints?: [number, number][];
   onAnnotationClick: (annotation: MapAnnotation) => void;
   onAnnotationMove: (annotation: MapAnnotation, pixel: PendingPixel) => void;
@@ -2983,6 +3012,9 @@ function MapPreview({
                 })()}
               </svg>
             ) : null}
+            {showWorldOrigin ? (
+              <WorldOriginMarker map={map} scale={transform.scale} />
+            ) : null}
             {annotations.map((annotation) => (
               <MapAnnotationMarker
                 key={annotation.id}
@@ -3247,6 +3279,81 @@ function RobotPositionMarker({
         }}
       >
         {robot.name}（{localization.label}）
+      </span>
+    </div>
+  );
+}
+
+function WorldOriginMarker({ map, scale }: { map: MapVersion; scale: number }) {
+  const pixelX = -map.origin.x / map.resolution;
+  const pixelY = map.height - 1 + map.origin.y / map.resolution;
+  if (pixelX < 0 || pixelX >= map.width || pixelY < 0 || pixelY >= map.height)
+    return null;
+  return (
+    <div
+      role="img"
+      aria-label="世界原点，坐标 (0, 0) 米，朝向 0 度"
+      title="世界原点：(0, 0) m\n朝向：+X（0°）"
+      style={{
+        alignItems: 'center',
+        color: '#fff',
+        display: 'flex',
+        flexDirection: 'column',
+        left: `${((pixelX + 0.5) / map.width) * 100}%`,
+        pointerEvents: 'none',
+        position: 'absolute',
+        top: `${((pixelY + 0.5) / map.height) * 100}%`,
+        transform: markerCenterTransform(scale),
+        zIndex: 3,
+      }}
+    >
+      <span
+        style={{
+          alignItems: 'center',
+          background: '#1677ff',
+          border: '2px solid #fff',
+          borderRadius: '50%',
+          boxShadow: '0 1px 6px #0008',
+          display: 'inline-flex',
+          height: 32,
+          justifyContent: 'center',
+          position: 'relative',
+          width: 32,
+        }}
+      >
+        <AimOutlined />
+        <span
+          style={{
+            inset: -11,
+            position: 'absolute',
+            transform: `rotate(${yawArrowCssDegrees(0)}deg)`,
+          }}
+        >
+          <span
+            style={{
+              borderBottom: '11px solid #1677ff',
+              borderLeft: '6px solid transparent',
+              borderRight: '6px solid transparent',
+              left: '50%',
+              position: 'absolute',
+              top: 0,
+              transform: 'translateX(-50%)',
+            }}
+          />
+        </span>
+      </span>
+      <span
+        style={{
+          background: '#1677ffe6',
+          borderRadius: 3,
+          fontSize: 11,
+          lineHeight: 1.4,
+          marginTop: 3,
+          padding: '1px 5px',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        世界原点（0, 0）m · 0°
       </span>
     </div>
   );

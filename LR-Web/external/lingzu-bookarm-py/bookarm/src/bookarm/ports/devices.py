@@ -61,6 +61,10 @@ class ArmPort(Protocol):
     def read_joint_pose(self) -> JointPose:
         ...
 
+    def tcp_pose(self, joints: JointPose) -> BasePose:
+        """Return the base-frame TCP pose for a logical joint pose."""
+        ...
+
     def move_to_pose_by_move_j(self, target: BasePose, duration_s: float) -> None:
         ...
 

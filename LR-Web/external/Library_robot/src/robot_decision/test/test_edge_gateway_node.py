@@ -1192,7 +1192,7 @@ def test_shelf_move_dispatches_x_only_mode() -> None:
         "CMD-SHELF-MOVE",
         "LR-01",
         "shelf_move",
-        {"x": 0.5, "y": 0.5, "yaw": 0.0, "speedMps": 0.08},
+        {"x": 0.5, "y": 0.5, "yaw": 0.0, "speedMps": 0.08, "xToleranceM": 0.02},
         datetime.now(UTC) + timedelta(minutes=1),
     )
 
@@ -1201,6 +1201,7 @@ def test_shelf_move_dispatches_x_only_mode() -> None:
     parameters = {parameter.name: parameter.value for parameter in parameter_requests[0].parameters}
     assert parameters["x_only"].bool_value is True
     assert parameters["shelf_move_speed_mps"].double_value == pytest.approx(0.08)
+    assert parameters["shelf_move_x_tolerance_m"].double_value == pytest.approx(0.02)
     assert events[0] == (
         "shelf_move_dispatching",
         command,
@@ -1211,6 +1212,7 @@ def test_shelf_move_dispatches_x_only_mode() -> None:
             "targetYaw": 0.0,
             "xOnly": True,
             "speedMps": 0.08,
+            "xToleranceM": 0.02,
         },
     )
     assert events[-1][0] == "command_completed"

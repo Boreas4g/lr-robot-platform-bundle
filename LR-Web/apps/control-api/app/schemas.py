@@ -350,29 +350,78 @@ class CompleteReturnRequest(BaseModel):
 
 
 class ShelfInternalRequest(BaseModel):
-    """Move one book shelf1 → shelf2 → shelf1 using straight X-only base moves."""
+    """Exchange books or continuously test X-only moves between two shelf poses."""
 
     robotId: str = Field(min_length=1, max_length=80)
-    bookId: str = Field(min_length=1, max_length=80)
-    referenceBook1Id: str = Field(min_length=1, max_length=80)
-    referenceBook2Id: str = Field(min_length=1, max_length=80)
+    bookId: str | None = Field(default=None, min_length=1, max_length=80)
+    book2Id: str | None = Field(default=None, min_length=1, max_length=80)
+    referenceBook1Id: str | None = Field(default=None, min_length=1, max_length=80)
+    referenceBook2Id: str | None = Field(default=None, min_length=1, max_length=80)
     shelf1Target: CompleteTakeoutTarget
     shelf2Target: CompleteTakeoutTarget
-    shelf1LiftHeightMm: float = Field(ge=10.0, le=1700.0)
-    shelf2LiftHeightMm: float = Field(ge=10.0, le=1700.0)
+    book1LiftHeightMm: float = Field(ge=10.0, le=1700.0)
+    book2LiftHeightMm: float = Field(ge=10.0, le=1700.0)
+    referenceBook1LiftHeightMm: float = Field(ge=10.0, le=1700.0)
+    referenceBook2LiftHeightMm: float = Field(ge=10.0, le=1700.0)
     moveSpeedMps: float = Field(default=0.05, ge=0.0, le=0.50)
     enableVehicleAlignment: bool = True
+    navigationOnly: bool = False
     bookStandSlot: int = Field(ge=1, le=5)
-    takeoutMode: Literal["standard", "mid"] = "standard"
+    book1TakeoutMode: Literal["standard", "mid"] = "standard"
+    book2TakeoutMode: Literal["standard", "mid"] = "standard"
+    book1ReturnMode: Literal["mid", "end"] = "mid"
+    book2ReturnMode: Literal["mid", "end"] = "mid"
     liftSpeedLevel: int = Field(default=2, ge=1, le=3)
     mapId: str | None = Field(default=None, max_length=80)
     shelf1AnnotationId: str | None = Field(default=None, max_length=80)
     shelf2AnnotationId: str | None = Field(default=None, max_length=80)
+    enableLoopMode: bool = False
+    book3Id: str | None = Field(default=None, min_length=1, max_length=80)
+    book4Id: str | None = Field(default=None, min_length=1, max_length=80)
+    referenceBook3Id: str | None = Field(default=None, min_length=1, max_length=80)
+    referenceBook4Id: str | None = Field(default=None, min_length=1, max_length=80)
+    book3LiftHeightMm: float | None = Field(default=None, ge=10.0, le=1700.0)
+    book4LiftHeightMm: float | None = Field(default=None, ge=10.0, le=1700.0)
+    referenceBook3LiftHeightMm: float | None = Field(default=None, ge=10.0, le=1700.0)
+    referenceBook4LiftHeightMm: float | None = Field(default=None, ge=10.0, le=1700.0)
+    book3TakeoutMode: Literal["standard", "mid"] = "standard"
+    book4TakeoutMode: Literal["standard", "mid"] = "standard"
+    book3ReturnMode: Literal["mid", "end"] = "mid"
+    book4ReturnMode: Literal["mid", "end"] = "mid"
 
     @model_validator(mode="after")
     def reference_books_stay_on_their_shelves(self) -> Self:
-        if len({self.bookId, self.referenceBook1Id, self.referenceBook2Id}) != 3:
-            raise ValueError("目标书、定位书1和定位书2必须互不相同")
+        if self.navigationOnly:
+            return self
+        book_ids = (
+            self.bookId,
+            self.book2Id,
+            self.referenceBook1Id,
+            self.referenceBook2Id,
+        )
+        if any(book_id is None for book_id in book_ids):
+            raise ValueError("架内取还书必须选择两本目标书和两本定位书")
+        if len(set(book_ids)) != 4:
+            raise ValueError("两本目标书和两本定位书必须互不相同")
+        if self.enableLoopMode:
+            extra_book_ids = (
+                self.book3Id,
+                self.book4Id,
+                self.referenceBook3Id,
+                self.referenceBook4Id,
+            )
+            if any(book_id is None for book_id in extra_book_ids):
+                raise ValueError("循环模式必须选择四本目标书和四本定位书")
+            if len(set((*book_ids, *extra_book_ids))) != 8:
+                raise ValueError("循环模式的四本目标书和四本定位书必须互不相同")
+            heights = (
+                self.book3LiftHeightMm,
+                self.book4LiftHeightMm,
+                self.referenceBook3LiftHeightMm,
+                self.referenceBook4LiftHeightMm,
+            )
+            if any(height is None for height in heights):
+                raise ValueError("循环模式必须设置第三、第四轮的取还书高度")
         return self
 
 

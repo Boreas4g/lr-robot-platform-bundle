@@ -238,21 +238,41 @@ export async function cancelCompleteReturn(taskId: string): Promise<DispatchTask
 
 export async function createShelfInternal(values: {
   robotId: string;
-  bookId: string;
-  referenceBook1Id: string;
-  referenceBook2Id: string;
+  bookId?: string;
+  book2Id?: string;
+  referenceBook1Id?: string;
+  referenceBook2Id?: string;
   shelf1Target: { x: number; y: number; yaw: number };
   shelf2Target: { x: number; y: number; yaw: number };
-  shelf1LiftHeightMm: number;
-  shelf2LiftHeightMm: number;
+  book1LiftHeightMm: number;
+  book2LiftHeightMm: number;
+  referenceBook1LiftHeightMm: number;
+  referenceBook2LiftHeightMm: number;
   moveSpeedMps?: number;
   enableVehicleAlignment?: boolean;
+  navigationOnly?: boolean;
   bookStandSlot: number;
-  takeoutMode?: TakeoutMode;
+  book1TakeoutMode?: TakeoutMode;
+  book2TakeoutMode?: TakeoutMode;
+  book1ReturnMode?: ReturnMode;
+  book2ReturnMode?: ReturnMode;
   liftSpeedLevel?: number;
   mapId?: string;
   shelf1AnnotationId?: string;
   shelf2AnnotationId?: string;
+  enableLoopMode?: boolean;
+  book3Id?: string;
+  book4Id?: string;
+  referenceBook3Id?: string;
+  referenceBook4Id?: string;
+  book3LiftHeightMm?: number;
+  book4LiftHeightMm?: number;
+  referenceBook3LiftHeightMm?: number;
+  referenceBook4LiftHeightMm?: number;
+  book3TakeoutMode?: TakeoutMode;
+  book4TakeoutMode?: TakeoutMode;
+  book3ReturnMode?: ReturnMode;
+  book4ReturnMode?: ReturnMode;
 }): Promise<DispatchTask> {
   return apiRequest('/api/v1/circulation/shelf-internal', {
     method: 'POST',

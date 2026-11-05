@@ -163,6 +163,17 @@ export function mapCoordsFromPixel(
   };
 }
 
+export function mapCoordsWithinMap(
+  map: Pick<MapVersion, 'width' | 'height' | 'resolution' | 'origin'>,
+  coords: { x: number; y: number },
+): boolean {
+  const pixelX = (coords.x - map.origin.x) / map.resolution;
+  const pixelY = map.height - 1 - (coords.y - map.origin.y) / map.resolution;
+  return (
+    pixelX >= 0 && pixelX < map.width && pixelY >= 0 && pixelY < map.height
+  );
+}
+
 /** Build the PATCH payload for the annotation edit form (yaw is entered in degrees). */
 export function buildAnnotationUpdate(values: {
   label: string;

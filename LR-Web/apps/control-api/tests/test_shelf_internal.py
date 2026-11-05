@@ -19,9 +19,11 @@ class FakeBookarmClient:
         self.events: list[tuple[str, dict[str, object] | str | float]] = []
         self.takeouts: list[dict[str, object]] = []
         self.midreturns: list[dict[str, object]] = []
+        self.returns: list[dict[str, object]] = []
         self.measured_height_mm = 10.0
         self._takeout_count = 0
         self._midreturn_count = 0
+        self._return_count = 0
 
     def create_takeout_task(self, **kwargs):  # noqa: ANN003, ANN201 - test double
         self._takeout_count += 1
@@ -47,6 +49,18 @@ class FakeBookarmClient:
     def cancel_midreturn_task(self, task_id):  # noqa: ANN001, ANN202 - test double
         return {"id": task_id, "state": "cancelled"}
 
+    def create_return_task(self, **kwargs):  # noqa: ANN003, ANN201 - test double
+        self._return_count += 1
+        self.returns.append(kwargs)
+        self.events.append(("return", kwargs))
+        return {"id": f"BT-SHELF-END-{self._return_count}", "state": "running"}
+
+    def get_return_task(self, task_id):  # noqa: ANN001, ANN202 - test double
+        return {"id": task_id, "state": "succeeded"}
+
+    def cancel_return_task(self, task_id):  # noqa: ANN001, ANN202 - test double
+        return {"id": task_id, "state": "cancelled"}
+
     def move_lift(self, height_mm, speed_level=2):  # noqa: ANN001, ANN202 - test double
         self.events.append(("lift", height_mm))
         return {
@@ -65,6 +79,7 @@ def _payload(**overrides) -> dict[str, object]:
     payload: dict[str, object] = {
         "robotId": "LR-01",
         "bookId": "BOOK-SHELF-1",
+        "book2Id": "BOOK-SHELF-4",
         "referenceBook1Id": "BOOK-SHELF-2",
         "referenceBook2Id": "BOOK-SHELF-3",
         "shelf1Target": {"x": 0.0, "y": 0.0, "yaw": 0.0},
@@ -72,12 +87,17 @@ def _payload(**overrides) -> dict[str, object]:
         "shelf1AnnotationId": "ANN-SHELF-1",
         "shelf2AnnotationId": "ANN-SHELF-2",
         "mapId": "MAP-SHELF",
-        "shelf1LiftHeightMm": 650,
-        "shelf2LiftHeightMm": 950,
+        "book1LiftHeightMm": 610,
+        "book2LiftHeightMm": 620,
+        "referenceBook1LiftHeightMm": 630,
+        "referenceBook2LiftHeightMm": 640,
         "moveSpeedMps": 0.08,
         "enableVehicleAlignment": False,
         "bookStandSlot": 2,
-        "takeoutMode": "mid",
+        "book1TakeoutMode": "mid",
+        "book2TakeoutMode": "standard",
+        "book1ReturnMode": "end",
+        "book2ReturnMode": "mid",
         "liftSpeedLevel": 2,
     }
     payload.update(overrides)
@@ -107,7 +127,7 @@ def shelf_context():
             ),
         }
     )
-    book_ids = [f"BOOK-SHELF-{index}" for index in range(1, 4)]
+    book_ids = [f"BOOK-SHELF-{index}" for index in range(1, 9)]
     original_books = {book_id: store.books.get(book_id) for book_id in book_ids}
     for index, book_id in enumerate(book_ids, start=1):
         store.books[book_id] = Book(
@@ -182,13 +202,15 @@ def test_shelf_internal_runs_four_arm_actions_and_two_low_lift_x_moves(shelf_con
 
     first_stage = _wait_new_shelf_moves(store, before_task_ids, 1)[0]
     assert len(fake.takeouts) == 1
+    assert fake.returns == []
     assert fake.midreturns == []
     _complete_shelf_move(store, first_stage, fake, "书架2")
 
     stages = _wait_new_shelf_moves(store, before_task_ids, 2)
     second_stage = next(item for item in stages if item.id != first_stage.id)
     assert len(fake.takeouts) == 2
-    assert len(fake.midreturns) == 1
+    assert len(fake.returns) == 1
+    assert fake.midreturns == []
     _complete_shelf_move(store, second_stage, fake, "书架1")
 
     completed = _wait_parent(store, task_id, {"completed"})
@@ -197,32 +219,44 @@ def test_shelf_internal_runs_four_arm_actions_and_two_low_lift_x_moves(shelf_con
         "takeout",
         "lift",
         "shelf_move",
-        "midreturn",
+        "return",
         "takeout",
         "lift",
         "shelf_move",
         "midreturn",
     ]
-    assert [item["book_id"] for item in fake.takeouts + fake.midreturns] == [
+    assert [item["book_id"] for item in fake.takeouts] == [
         "BOOK-SHELF-1",
-        "BOOK-SHELF-1",
-        "BOOK-SHELF-1",
-        "BOOK-SHELF-1",
+        "BOOK-SHELF-4",
     ]
-    assert all(
-        item["enable_vehicle_alignment"] is False
-        for item in fake.takeouts + fake.midreturns
-    )
-    assert [item["template_id"] for item in fake.midreturns] == [
-        "TPL-SHELF-3",
-        "TPL-SHELF-2",
+    assert [item["takeout_mode"] for item in fake.takeouts] == ["mid", "standard"]
+    assert [item["template_id"] for item in fake.takeouts] == [
+        "TPL-SHELF-1",
+        "TPL-SHELF-4",
     ]
+    assert [event[1] for event in fake.events if event[0] == "lift"] == [10.0, 10.0]
+    assert all(item["enable_vehicle_alignment"] is False for item in fake.takeouts)
+    assert fake.returns[0]["book_id"] == "BOOK-SHELF-1"
+    assert fake.returns[0]["template_id"] == "TPL-SHELF-3"
+    assert fake.returns[0]["target_height_mm"] == 640
+    assert fake.returns[0]["enable_vehicle_alignment"] is False
+    assert fake.midreturns[0]["book_id"] == "BOOK-SHELF-4"
+    assert fake.midreturns[0]["template_id"] == "TPL-SHELF-2"
+    assert fake.midreturns[0]["target_height_mm"] == 630
+    assert fake.midreturns[0]["enable_vehicle_alignment"] is False
     assert [item["destination_slot"] for item in fake.takeouts] == [2, 2]
-    assert [item["source_slot"] for item in fake.midreturns] == [2, 2]
-    assert [item["target_height_mm"] for item in fake.takeouts] == [650, 950]
-    assert [item["target_height_mm"] for item in fake.midreturns] == [950, 650]
-    assert completed.workflowDetails["shelf1LiftHeightMm"] == 650
-    assert completed.workflowDetails["shelf2LiftHeightMm"] == 950
+    assert fake.returns[0]["source_slot"] == 2
+    assert fake.midreturns[0]["source_slot"] == 2
+    assert [item["target_height_mm"] for item in fake.takeouts] == [610, 620]
+    assert completed.workflowDetails["book2Id"] == "BOOK-SHELF-4"
+    assert completed.workflowDetails["book1LiftHeightMm"] == 610
+    assert completed.workflowDetails["book2LiftHeightMm"] == 620
+    assert completed.workflowDetails["referenceBook1LiftHeightMm"] == 630
+    assert completed.workflowDetails["referenceBook2LiftHeightMm"] == 640
+    assert completed.workflowDetails["book1TakeoutMode"] == "mid"
+    assert completed.workflowDetails["book2TakeoutMode"] == "standard"
+    assert completed.workflowDetails["book1ReturnMode"] == "end"
+    assert completed.workflowDetails["book2ReturnMode"] == "mid"
     assert completed.workflowDetails["moveSpeedMps"] == 0.08
     assert completed.workflowDetails["enableVehicleAlignment"] is False
 
@@ -236,6 +270,84 @@ def test_shelf_internal_runs_four_arm_actions_and_two_low_lift_x_moves(shelf_con
     assert commands[1].payload["x"] == 0.0
     assert all(command.payload["speedMps"] == 0.08 for command in commands)
     assert all(command.payload["controlMode"] == "differential" for command in commands)
+
+
+def test_loop_mode_appends_two_more_take_return_rounds(shelf_context) -> None:  # noqa: ANN001
+    store, fake, before_task_ids = shelf_context
+    created = client.post(
+        "/api/v1/circulation/shelf-internal",
+        headers=_headers(),
+        json=_payload(
+            enableLoopMode=True,
+            book3Id="BOOK-SHELF-5",
+            book4Id="BOOK-SHELF-8",
+            referenceBook3Id="BOOK-SHELF-6",
+            referenceBook4Id="BOOK-SHELF-7",
+            book3LiftHeightMm=650,
+            book4LiftHeightMm=660,
+            referenceBook3LiftHeightMm=670,
+            referenceBook4LiftHeightMm=680,
+            book3TakeoutMode="standard",
+            book4TakeoutMode="mid",
+            book3ReturnMode="end",
+            book4ReturnMode="mid",
+        ),
+    )
+    assert created.status_code == 201
+    task_id = created.json()["id"]
+
+    completed_stages = set()
+    for label in ("书架2", "书架1", "书架2", "书架1"):
+        count = len(completed_stages) + 1
+        stages = _wait_new_shelf_moves(store, before_task_ids, count)
+        stage = next(item for item in stages if item.id not in completed_stages)
+        completed_stages.add(stage.id)
+        _complete_shelf_move(store, stage, fake, label)
+
+    completed = _wait_parent(store, task_id, {"completed"})
+    assert [event[0] for event in fake.events] == [
+        "takeout", "lift", "shelf_move", "return",
+        "takeout", "lift", "shelf_move", "midreturn",
+        "takeout", "lift", "shelf_move", "return",
+        "takeout", "lift", "shelf_move", "midreturn",
+    ]
+    assert [item["book_id"] for item in fake.takeouts] == [
+        "BOOK-SHELF-1", "BOOK-SHELF-4", "BOOK-SHELF-5", "BOOK-SHELF-8",
+    ]
+    assert [item["takeout_mode"] for item in fake.takeouts] == [
+        "mid", "standard", "standard", "mid",
+    ]
+    assert [item["target_height_mm"] for item in fake.takeouts] == [610, 620, 650, 660]
+    assert [item["book_id"] for item in fake.returns] == ["BOOK-SHELF-1", "BOOK-SHELF-5"]
+    assert [item["template_id"] for item in fake.returns] == ["TPL-SHELF-3", "TPL-SHELF-7"]
+    assert [item["target_height_mm"] for item in fake.returns] == [640, 680]
+    assert [item["book_id"] for item in fake.midreturns] == ["BOOK-SHELF-4", "BOOK-SHELF-8"]
+    assert [item["template_id"] for item in fake.midreturns] == ["TPL-SHELF-2", "TPL-SHELF-6"]
+    assert [item["target_height_mm"] for item in fake.midreturns] == [630, 670]
+    assert [event[1] for event in fake.events if event[0] == "lift"] == [10.0] * 4
+    assert completed.workflowDetails["enableLoopMode"] is True
+    assert completed.workflowDetails["book3Id"] == "BOOK-SHELF-5"
+    assert completed.workflowDetails["book4Id"] == "BOOK-SHELF-8"
+    assert completed.workflowDetails["referenceBook3Id"] == "BOOK-SHELF-6"
+    assert completed.workflowDetails["referenceBook4Id"] == "BOOK-SHELF-7"
+
+    commands = [
+        command
+        for command in store.commands.values()
+        if command.command == "shelf_move"
+        and command.commandId.replace("CMD-", "TSK-", 1) not in before_task_ids
+    ]
+    assert len(commands) == 4
+    assert [command.payload["x"] for command in commands] == [1.5, 0.0, 1.5, 0.0]
+
+
+def test_loop_mode_requires_the_additional_four_books(shelf_context) -> None:  # noqa: ANN001
+    created = client.post(
+        "/api/v1/circulation/shelf-internal",
+        headers=_headers(),
+        json=_payload(enableLoopMode=True),
+    )
+    assert created.status_code == 422
 
 
 def test_shelf_internal_blocks_base_move_when_lift_is_not_at_minimum(shelf_context) -> None:  # noqa: ANN001
@@ -281,11 +393,94 @@ def test_cancel_after_lowering_never_dispatches_a_base_move(shelf_context) -> No
     ]
 
 
+def test_navigation_only_repeats_two_points_without_book_actions(shelf_context) -> None:  # noqa: ANN001
+    store, fake, before_task_ids = shelf_context
+    payload = _payload(navigationOnly=True)
+    for key in ("bookId", "book2Id", "referenceBook1Id", "referenceBook2Id"):
+        payload.pop(key)
+    created = client.post(
+        "/api/v1/circulation/shelf-internal", headers=_headers(), json=payload
+    )
+    assert created.status_code == 201
+    task_id = created.json()["id"]
+
+    first_stage = _wait_new_shelf_moves(store, before_task_ids, 1)[0]
+    _complete_shelf_move(store, first_stage, fake, "书架2")
+    stages = _wait_new_shelf_moves(store, before_task_ids, 2)
+    second_stage = next(item for item in stages if item.id != first_stage.id)
+    _complete_shelf_move(store, second_stage, fake, "书架1")
+    third_stage = next(
+        item
+        for item in _wait_new_shelf_moves(store, before_task_ids, 3)
+        if item.id not in {first_stage.id, second_stage.id}
+    )
+
+    assert fake.takeouts == []
+    assert fake.returns == []
+    assert fake.midreturns == []
+    assert [event[0] for event in fake.events] == [
+        "lift",
+        "shelf_move",
+        "lift",
+        "shelf_move",
+        "lift",
+    ]
+    assert created.json()["workflowDetails"]["navigationOnly"] is True
+    assert third_stage.annotationId == "ANN-SHELF-2"
+    parent = _wait_parent(store, task_id, {"running"})
+    assert parent.workflowDetails["navigationCycles"] == 1
+    commands = [
+        command
+        for command in store.commands.values()
+        if command.command == "shelf_move"
+        and command.commandId.replace("CMD-", "TSK-", 1) not in before_task_ids
+    ]
+    assert len(commands) == 3
+    assert all(command.payload["xToleranceM"] == 0.02 for command in commands)
+    cancelled = client.post(
+        f"/api/v1/circulation/shelf-internal/{task_id}/cancel", headers=_headers()
+    )
+    assert cancelled.status_code == 202
+    _wait_parent(store, task_id, {"cancelled"})
+
+
+def test_navigation_only_cancel_during_dwell_skips_return_move(shelf_context) -> None:  # noqa: ANN001
+    store, fake, before_task_ids = shelf_context
+    created = client.post(
+        "/api/v1/circulation/shelf-internal",
+        headers=_headers(),
+        json=_payload(navigationOnly=True),
+    )
+    assert created.status_code == 201
+    task_id = created.json()["id"]
+    first_stage = _wait_new_shelf_moves(store, before_task_ids, 1)[0]
+    _complete_shelf_move(store, first_stage, fake, "书架2")
+
+    cancelled = client.post(
+        f"/api/v1/circulation/shelf-internal/{task_id}/cancel", headers=_headers()
+    )
+    assert cancelled.status_code == 202
+    _wait_parent(store, task_id, {"cancelled"})
+    assert len([event for event in fake.events if event[0] == "shelf_move"]) == 1
+    assert fake.takeouts == []
+    assert fake.returns == []
+    assert fake.midreturns == []
+
+
 def test_shelf_internal_rejects_duplicate_reference_books(shelf_context) -> None:  # noqa: ANN001
     created = client.post(
         "/api/v1/circulation/shelf-internal",
         headers=_headers(),
         json=_payload(referenceBook2Id="BOOK-SHELF-1"),
+    )
+    assert created.status_code == 422
+
+
+def test_shelf_internal_rejects_the_same_target_book_for_both_rounds(shelf_context) -> None:  # noqa: ANN001
+    created = client.post(
+        "/api/v1/circulation/shelf-internal",
+        headers=_headers(),
+        json=_payload(book2Id="BOOK-SHELF-1"),
     )
     assert created.status_code == 422
 

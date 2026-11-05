@@ -66,6 +66,48 @@ def run_mid_grasp_chain(
     }
 
 
+def run_mid_put_back_before_lower(
+    arm: ArmPort,
+    rod: RodPort,
+    engine: WorkflowEngine,
+    task: Any,
+    plan: MidReturnMotionPlan,
+    fine_grasp: BasePose,
+    *,
+    rod_home_before_re_push: bool = False,
+) -> Dict[str, Any]:
+    """Run put-back steps 8-11, optionally homing the rod before the re-push."""
+
+    def home_rod() -> None:
+        rod.move_to_deg(
+            plan.rod_putback_deg,
+            plan.rod_speed,
+            plan.rod_acceleration,
+            plan.rod_tolerance_deg,
+            plan.rod_timeout_s,
+        )
+        engine.raise_if_cancelled(task)
+
+    push_in = fine_grasp.offset_cm((plan.push_in_x_offset_cm, 0.0, 0.0))
+    arm.move_l(push_in, plan.push_in_duration_s)
+    engine.raise_if_cancelled(task)
+    partial_command = replace(plan.gripper, open_deg=plan.partial_release_deg)
+    arm.open_gripper(plan.partial_release_deg, partial_command)
+    engine.raise_if_cancelled(task)
+    if rod_home_before_re_push:
+        home_rod()
+    re_push = push_in.offset_cm((plan.re_push_x_offset_cm, 0.0, 0.0))
+    arm.move_l(re_push, plan.re_push_duration_s)
+    engine.raise_if_cancelled(task)
+    if not rod_home_before_re_push:
+        home_rod()
+    return {
+        "push_in_base_pose": push_in.values(),
+        "re_push_base_pose": re_push.values(),
+        "partial_command": partial_command,
+    }
+
+
 def run_mid_put_back_prefix(
     arm: ArmPort,
     rod: RodPort,
@@ -76,30 +118,16 @@ def run_mid_put_back_prefix(
 ) -> Dict[str, Any]:
     """Run tuning steps 8-12: push, release, re-push, rod home and lower."""
 
-    push_in = fine_grasp.offset_cm((plan.push_in_x_offset_cm, 0.0, 0.0))
-    arm.move_l(push_in, plan.push_in_duration_s)
-    engine.raise_if_cancelled(task)
-    partial_command = replace(plan.gripper, open_deg=plan.partial_release_deg)
-    arm.open_gripper(plan.partial_release_deg, partial_command)
-    engine.raise_if_cancelled(task)
-    re_push = push_in.offset_cm((plan.re_push_x_offset_cm, 0.0, 0.0))
-    arm.move_l(re_push, plan.re_push_duration_s)
-    engine.raise_if_cancelled(task)
-    anchor = re_push
+    put_back = run_mid_put_back_before_lower(
+        arm, rod, engine, task, plan, fine_grasp
+    )
+    anchor = BasePose.from_values(put_back["re_push_base_pose"])
     details: Dict[str, Any] = {}
     if hasattr(plan, "raise_z_offset_cm"):
-        anchor = re_push.offset_cm((0.0, 0.0, plan.raise_z_offset_cm))
+        anchor = anchor.offset_cm((0.0, 0.0, plan.raise_z_offset_cm))
         arm.move_l(anchor, plan.raise_duration_s)
         engine.raise_if_cancelled(task)
         details["raise_base_pose"] = anchor.values()
-    rod.move_to_deg(
-        plan.rod_putback_deg,
-        plan.rod_speed,
-        plan.rod_acceleration,
-        plan.rod_tolerance_deg,
-        plan.rod_timeout_s,
-    )
-    engine.raise_if_cancelled(task)
     lower = anchor.offset_cm(
         getattr(plan, "lower_offset_cm", (0.0, 0.0, plan.lower_z_offset_cm)),
         rpy_offset_deg=getattr(plan, "lower_rpy_offset_deg", (0.0, 0.0, 0.0)),
@@ -107,9 +135,7 @@ def run_mid_put_back_prefix(
     arm.move_l(lower, plan.lower_duration_s)
     engine.raise_if_cancelled(task)
     return {
-        "push_in_base_pose": push_in.values(),
-        "re_push_base_pose": re_push.values(),
+        **put_back,
         "lower_base_pose": lower.values(),
-        "partial_command": partial_command,
         **details,
     }

@@ -160,6 +160,7 @@ class PinocchioKinematics:
             pin.updateFramePlacements(self._model, self._data)
             error = pin.log6(self._data.oMf[self._frame_id].actInv(desired)).vector
             if float(np.linalg.norm(error)) < float(eps):
+                self._clamp_to_limits(q)
                 return JointPose.from_values(q[:6])
             jacobian = pin.computeFrameJacobian(self._model, self._data, q, self._frame_id, pin.LOCAL)
             jtj = jacobian.T @ jacobian + float(damping) * np.eye(self._model.nv)
@@ -224,6 +225,7 @@ class PinocchioKinematics:
             q = pin.integrate(self._model, q, delta)
             self._clamp_to_limits(q)
 
+        self._clamp_to_limits(q)
         return JointPose.from_values(q[:6]), error_norm
 
     def forward_kinematics(self, joints: JointPose) -> BasePose:

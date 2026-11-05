@@ -147,10 +147,10 @@ start_node lidar_rear "$INSTALL/lslidar_driver/lib/lslidar_driver/lslidar_driver
   --params-file "$WS/src/lslidar_driver/params/lsx10_2.yaml" || fail=1
 
 start_node tf_front /opt/ros/jazzy/lib/tf2_ros/static_transform_publisher \
-  --x 0.235 --y 0.282 --z 0.0 --roll 0.0 --pitch 0.0 --yaw 0.78539816339 \
+  --x 0.25 --y 0.282 --z 0.0 --roll 0.0 --pitch 0.0 --yaw 0.78539816339 \
   --frame-id base_link --child-frame-id laser_link || fail=1
 start_node tf_rear /opt/ros/jazzy/lib/tf2_ros/static_transform_publisher \
-  --x -0.235 --y -0.282 --z 0.0 --roll 0.0 --pitch 0.0 --yaw -2.3561944901 \
+  --x -0.25 --y -0.282 --z 0.0 --roll 0.0 --pitch 0.0 --yaw -2.3561944901 \
   --frame-id base_link --child-frame-id laser_link_b || fail=1
 
 start_node laser_merger "$INSTALL/dual_laser_merger/lib/dual_laser_merger/dual_laser_merger_node" \

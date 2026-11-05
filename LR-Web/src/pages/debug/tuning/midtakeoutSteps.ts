@@ -3,10 +3,10 @@ import { midreturnSteps } from './midreturnSteps';
 import { takeSteps } from './takeSteps';
 
 export const midtakeoutSteps: TuningStepDef[] = [
-  ...midreturnSteps.slice(0, 10),
+  ...midreturnSteps.slice(0, 9),
   {
     title: '机械臂上移',
-    hint: '在再次推回后、推杆归位前，相对当前位置沿 Z 轴上移（正值向上）。',
+    hint: '在推杆归位前，按当前末端位置仅叠加 Z 偏移（正值向上）；X/Y 与姿态保持不变，不重新计算其他位置数据。',
     fields: [
       {
         path: 'raise_z_offset_cm',
@@ -25,36 +25,7 @@ export const midtakeoutSteps: TuningStepDef[] = [
       },
     ],
   },
-  { ...midreturnSteps[10] },
-  {
-    ...midreturnSteps[11],
-    hint: '以上移后的位姿为基准，设置 X/Y/Z 与 Rx/Ry/Rz 六维偏移，仅影响中位取书。',
-    fields: [
-      {
-        path: 'lower_offset_cm',
-        label: '下降位置偏移',
-        unit: 'cm',
-        components: ['x', 'y', 'z'],
-        step: 0.5,
-        precision: 1,
-      },
-      {
-        path: 'lower_rpy_offset_deg',
-        label: '下降姿态偏移',
-        unit: 'deg',
-        components: ['rx', 'ry', 'rz'],
-        step: 1,
-        precision: 1,
-      },
-      ...midreturnSteps[11].fields.filter(
-        (field) => field.path === 'lower_duration_s',
-      ),
-    ],
-  },
-  {
-    ...midreturnSteps[13],
-    title: '完全闭合夹爪',
-    hint: '跳过中位还书的「全部张开」，直接完全闭合夹住待取出的书。',
-  },
-  ...takeSteps.slice(8),
+  midreturnSteps[9],
+  midreturnSteps[10],
+  ...takeSteps.slice(7),
 ];

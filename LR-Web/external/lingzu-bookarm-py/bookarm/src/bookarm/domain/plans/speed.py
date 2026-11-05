@@ -139,9 +139,6 @@ _MID_RETURN_DURATION_FIELDS = (
     "insert_duration_s",
     "push_duration_s",
     "retract_duration_s",
-    "rotate_duration_s",
-    "press_duration_s",
-    "press_retract_duration_s",
 )
 _MID_TAKEOUT_DURATION_FIELDS = _MID_RETURN_DURATION_FIELDS + (
     "raise_duration_s",

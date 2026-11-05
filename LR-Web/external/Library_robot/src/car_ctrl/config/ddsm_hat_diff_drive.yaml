@@ -32,7 +32,7 @@ ddsm_hat_diff_drive:
     init_hat: true
     log_serial_tx: false
     log_serial_rx: true
-    per_motor_command_gap: 0.003
+    per_motor_command_gap: 0.0
     feedback_log_rate_hz: 2.0
 
     # driver_backend=ddsm_rs485 uses the DDSM115 native 10-byte RS485 protocol.

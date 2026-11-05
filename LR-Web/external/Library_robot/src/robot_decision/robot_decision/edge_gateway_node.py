@@ -1404,6 +1404,8 @@ class EdgeGatewayNode(Node):
             dispatch_details["xOnly"] = True
             if target.speed_mps is not None:
                 dispatch_details["speedMps"] = target.speed_mps
+            if target.x_tolerance_m is not None:
+                dispatch_details["xToleranceM"] = target.x_tolerance_m
         self._publish_event(
             f"{command.command}_dispatching",
             command,
@@ -1417,6 +1419,10 @@ class EdgeGatewayNode(Node):
             self._double_parameter(
                 "shelf_move_speed_mps",
                 target.speed_mps if target.speed_mps is not None else float("nan"),
+            ),
+            self._double_parameter(
+                "shelf_move_x_tolerance_m",
+                target.x_tolerance_m if target.x_tolerance_m is not None else float("nan"),
             ),
             self._double_parameter("target_x", target.x),
             self._double_parameter("target_y", target.y),

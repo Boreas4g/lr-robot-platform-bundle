@@ -76,6 +76,7 @@ class FineTuneTarget:
     y: float
     yaw: float
     speed_mps: float | None = None
+    x_tolerance_m: float | None = None
 
 
 @dataclass(frozen=True)
@@ -260,7 +261,23 @@ def parse_fine_tune(
         speed_mps = float(speed_value)
         if not math.isfinite(speed_mps) or not 0.0 <= speed_mps <= 0.50:
             raise ValueError("架内移动速度必须在 0~0.50 m/s")
-    return FineTuneTarget(map_id=map_id, x=x, y=y, yaw=yaw, speed_mps=speed_mps)
+    tolerance_value = payload.get("xToleranceM")
+    if tolerance_value is None:
+        x_tolerance_m = None
+    else:
+        if isinstance(tolerance_value, bool) or not isinstance(tolerance_value, (int, float)):
+            raise ValueError("架内移动 X 容差必须是有限数值")
+        x_tolerance_m = float(tolerance_value)
+        if not math.isfinite(x_tolerance_m) or not 0.001 <= x_tolerance_m <= 0.20:
+            raise ValueError("架内移动 X 容差必须在 0.001~0.20 m")
+    return FineTuneTarget(
+        map_id=map_id,
+        x=x,
+        y=y,
+        yaw=yaw,
+        speed_mps=speed_mps,
+        x_tolerance_m=x_tolerance_m,
+    )
 
 
 def _read_fine_tune_coordinate(payload: dict[str, Any], key: str) -> float:

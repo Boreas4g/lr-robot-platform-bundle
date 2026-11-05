@@ -27,6 +27,7 @@ class ReturnBookStage(str, Enum):
 
     LIFT_MOVE = "lift_move"
     ARM_DEBUG_POSE = "arm_debug_pose"
+    ROD_HOME = "rod_home"
     VISION_RETARGET = "vision_retarget"
     POST_VISION_ALIGN = "post_vision_align"
     BOOK_STAND_PICKUP = "book_stand_pickup"
@@ -72,11 +73,12 @@ class TakeBookRequest:
 class ReturnBookRequest:
     book: BookIdentity
     target_height_mm: float
-    # The reference book to identify by its spine; the returned book is
-    # inserted beside it (insert Y = its grasp y + the plan's y offset).
+    # The reference book supplies target XY for the insertion chain; each
+    # step adds its XY offset and uses its configured absolute base-frame Z.
     left_neighbor_spine_template: SpineTemplate
     source_slot: BookStandSlot
     lift_speed_level: int = 1
+    enable_vehicle_alignment: bool = True
     stop_after_stage: ReturnBookStage = ReturnBookStage.SHELF_INSERT
 
 

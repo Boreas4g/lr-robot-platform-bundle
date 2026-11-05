@@ -2532,9 +2532,36 @@ class InMemoryStore:
             map_id = request.mapId or robot.mapId
             if not map_id or robot.mapId != map_id:
                 raise ValueError("架内取还书目标必须位于机器人当前地图")
-            book = self._require_book(request.bookId)
-            reference1 = self._require_book(request.referenceBook1Id)
-            reference2 = self._require_book(request.referenceBook2Id)
+            book = self._require_book(request.bookId) if request.bookId else None
+            book2 = self._require_book(request.book2Id) if request.book2Id else None
+            reference1 = (
+                self._require_book(request.referenceBook1Id)
+                if request.referenceBook1Id
+                else None
+            )
+            reference2 = (
+                self._require_book(request.referenceBook2Id)
+                if request.referenceBook2Id
+                else None
+            )
+            loop_books = None
+            if request.enableLoopMode:
+                loop_books = (
+                    self._require_book(request.book3Id) if request.book3Id else None,
+                    self._require_book(request.book4Id) if request.book4Id else None,
+                    self._require_book(request.referenceBook3Id)
+                    if request.referenceBook3Id
+                    else None,
+                    self._require_book(request.referenceBook4Id)
+                    if request.referenceBook4Id
+                    else None,
+                )
+            if not request.navigationOnly and not all(
+                (book, book2, reference1, reference2)
+            ):
+                raise ValueError("架内取还书必须选择两本目标书和两本定位书")
+            if not request.navigationOnly and loop_books is not None and not all(loop_books):
+                raise ValueError("循环模式必须选择四本目标书和四本定位书")
             active = next(
                 (
                     item
@@ -2566,27 +2593,51 @@ class InMemoryStore:
                 id=f"TSK-{uuid4().hex[:12].upper()}",
                 type="shelf_internal",
                 robotId=robot.id,
-                target=book.name,
+                target=(
+                    "仅测导航：书架1 ↔ 书架2"
+                    if request.navigationOnly
+                    else f"{book.name} / {book2.name}"
+                ),
                 status="queued",
                 progress=0,
                 updatedAt=_now_iso(),
-                bookId=book.id,
+                bookId=book.id if book else None,
                 mapId=map_id,
                 workflowMessage="排队中",
                 workflowDetails={
-                    "bookId": book.id,
-                    "referenceBook1Id": reference1.id,
-                    "referenceBook2Id": reference2.id,
+                    "bookId": book.id if book else None,
+                    "book2Id": book2.id if book2 else None,
+                    "referenceBook1Id": reference1.id if reference1 else None,
+                    "referenceBook2Id": reference2.id if reference2 else None,
                     "shelf1Target": request.shelf1Target.model_dump(),
                     "shelf2Target": request.shelf2Target.model_dump(),
                     "shelf1AnnotationId": request.shelf1AnnotationId,
                     "shelf2AnnotationId": request.shelf2AnnotationId,
+                    "navigationOnly": request.navigationOnly,
                     "bookStandSlot": request.bookStandSlot,
-                    "shelf1LiftHeightMm": request.shelf1LiftHeightMm,
-                    "shelf2LiftHeightMm": request.shelf2LiftHeightMm,
+                    "book1LiftHeightMm": request.book1LiftHeightMm,
+                    "book2LiftHeightMm": request.book2LiftHeightMm,
+                    "referenceBook1LiftHeightMm": request.referenceBook1LiftHeightMm,
+                    "referenceBook2LiftHeightMm": request.referenceBook2LiftHeightMm,
                     "moveSpeedMps": request.moveSpeedMps,
                     "enableVehicleAlignment": request.enableVehicleAlignment,
-                    "takeoutMode": request.takeoutMode,
+                    "book1TakeoutMode": request.book1TakeoutMode,
+                    "book2TakeoutMode": request.book2TakeoutMode,
+                    "book1ReturnMode": request.book1ReturnMode,
+                    "book2ReturnMode": request.book2ReturnMode,
+                    "enableLoopMode": request.enableLoopMode,
+                    "book3Id": request.book3Id,
+                    "book4Id": request.book4Id,
+                    "referenceBook3Id": request.referenceBook3Id,
+                    "referenceBook4Id": request.referenceBook4Id,
+                    "book3LiftHeightMm": request.book3LiftHeightMm,
+                    "book4LiftHeightMm": request.book4LiftHeightMm,
+                    "referenceBook3LiftHeightMm": request.referenceBook3LiftHeightMm,
+                    "referenceBook4LiftHeightMm": request.referenceBook4LiftHeightMm,
+                    "book3TakeoutMode": request.book3TakeoutMode,
+                    "book4TakeoutMode": request.book4TakeoutMode,
+                    "book3ReturnMode": request.book3ReturnMode,
+                    "book4ReturnMode": request.book4ReturnMode,
                 },
             )
             self.tasks.insert(0, task)
@@ -2597,7 +2648,7 @@ class InMemoryStore:
             self._cancel_in_flight_stage_tasks(robot, superseded, user)
         thread = Thread(
             target=self._run_shelf_internal,
-            args=(task.id, request, book, reference1, reference2, user),
+            args=(task.id, request, book, book2, reference1, reference2, loop_books, user),
             name=f"shelf-internal-{task.id}",
             daemon=True,
         )
@@ -2628,38 +2679,79 @@ class InMemoryStore:
         self,
         task_id: str,
         request: ShelfInternalRequest,
-        book: Book,
-        reference1: Book,
-        reference2: Book,
+        book: Book | None,
+        book2: Book | None,
+        reference1: Book | None,
+        reference2: Book | None,
+        loop_books: tuple[Book | None, Book | None, Book | None, Book | None] | None,
         user: User,
     ) -> None:
         cancel = self._shelf_internal_cancels.get(task_id)
         try:
             client = self._bookarm_client()
+            if request.navigationOnly:
+                self._run_shelf_navigation_only(task_id, request, cancel, client, user)
+                return
+            if book is None or book2 is None or reference1 is None or reference2 is None:
+                raise ValueError("架内取还书必须选择两本目标书和两本定位书")
             self._run_shelf_takeout_phase(
-                task_id, request, book, request.shelf1LiftHeightMm,
-                "书架1取目标书", 5, cancel, client
+                task_id, request, book, request.book1TakeoutMode, request.book1LiftHeightMm,
+                "第一轮：书架1取目标书1", 5, cancel, client
             )
             self._run_shelf_move_phase(
                 task_id, request, request.shelf2Target, request.shelf2AnnotationId,
                 "书架2", 22, cancel, client, user
             )
             self._run_shelf_return_phase(
-                task_id, request, book, reference2, request.shelf2LiftHeightMm,
-                "还到书架2定位书2旁边", 38, cancel, client
+                task_id, request, book, reference2, request.referenceBook2LiftHeightMm,
+                request.book1ReturnMode, "第一轮：书1还到书架2定位书2旁边", 38, cancel, client
             )
             self._run_shelf_takeout_phase(
-                task_id, request, book, request.shelf2LiftHeightMm,
-                "书架2再次取同一本目标书", 55, cancel, client
+                task_id, request, book2, request.book2TakeoutMode, request.book2LiftHeightMm,
+                "第二轮：书架2取目标书2", 55, cancel, client
             )
             self._run_shelf_move_phase(
                 task_id, request, request.shelf1Target, request.shelf1AnnotationId,
                 "书架1", 72, cancel, client, user
             )
             self._run_shelf_return_phase(
-                task_id, request, book, reference1, request.shelf1LiftHeightMm,
-                "还到书架1定位书1旁边", 88, cancel, client
+                task_id, request, book2, reference1, request.referenceBook1LiftHeightMm,
+                request.book2ReturnMode, "第二轮：书2还到书架1定位书1旁边", 88, cancel, client
             )
+            if loop_books is not None:
+                book3, book4, reference3, reference4 = loop_books
+                heights = (
+                    request.book3LiftHeightMm,
+                    request.book4LiftHeightMm,
+                    request.referenceBook3LiftHeightMm,
+                    request.referenceBook4LiftHeightMm,
+                )
+                if not all(loop_books) or any(height is None for height in heights):
+                    raise ValueError("循环模式的第三、第四轮配置不完整")
+                self._run_shelf_takeout_phase(
+                    task_id, request, book3, request.book3TakeoutMode,
+                    request.book3LiftHeightMm, "第三轮：书架1取目标书3", 90, cancel, client
+                )
+                self._run_shelf_move_phase(
+                    task_id, request, request.shelf2Target, request.shelf2AnnotationId,
+                    "书架2", 91, cancel, client, user
+                )
+                self._run_shelf_return_phase(
+                    task_id, request, book3, reference4, request.referenceBook4LiftHeightMm,
+                    request.book3ReturnMode, "第三轮：书3还到书架2定位书4旁边", 94, cancel, client
+                )
+                self._run_shelf_takeout_phase(
+                    task_id, request, book4, request.book4TakeoutMode,
+                    request.book4LiftHeightMm, "第四轮：书架2取目标书4", 95, cancel, client
+                )
+                self._run_shelf_move_phase(
+                    task_id, request, request.shelf1Target, request.shelf1AnnotationId,
+                    "书架1", 96, cancel, client, user
+                )
+                self._run_shelf_return_phase(
+                    task_id, request, book4, reference3, request.referenceBook3LiftHeightMm,
+                    request.book4ReturnMode, "第四轮：书4还到书架1定位书3旁边", 99, cancel, client
+                )
             self._update_takeout_task(
                 task_id, status="completed", progress=100, workflowMessage="架内取还书完成"
             )
@@ -2686,11 +2778,71 @@ class InMemoryStore:
             self._release_robot_arm_busy(request.robotId)
             self._shelf_internal_cancels.pop(task_id, None)
 
+    def _run_shelf_navigation_only(
+        self,
+        task_id: str,
+        request: ShelfInternalRequest,
+        cancel: Event | None,
+        client: Any,
+        user: User,
+    ) -> None:
+        self._update_takeout_task(task_id, status="running")
+        cycle = 1
+        destinations = (
+            (
+                request.shelf2Target,
+                request.shelf2AnnotationId,
+                "书架2",
+                "返回书架1",
+            ),
+            (
+                request.shelf1Target,
+                request.shelf1AnnotationId,
+                "书架1",
+                "前往书架2",
+            ),
+        )
+        while True:
+            for target, annotation_id, shelf_label, next_action in destinations:
+                self._run_shelf_move_phase(
+                    task_id,
+                    request,
+                    target,
+                    annotation_id,
+                    shelf_label,
+                    0,
+                    cancel,
+                    client,
+                    user,
+                )
+                self._update_takeout_task(
+                    task_id,
+                    status="running",
+                    progress=50,
+                    workflowMessage=(
+                        f"第 {cycle} 轮：{shelf_label}已到位，静止 1 秒后{next_action}"
+                    ),
+                )
+                if cancel is not None:
+                    if cancel.wait(1.0):
+                        raise _FlowCancelled()
+                else:
+                    time.sleep(1.0)
+            self._update_takeout_task(
+                task_id,
+                workflowDetails={
+                    **self._takeout_workflow_details(task_id),
+                    "navigationCycles": cycle,
+                },
+            )
+            cycle += 1
+
     def _run_shelf_takeout_phase(
         self,
         task_id: str,
         request: ShelfInternalRequest,
         book: Book,
+        takeout_mode: str,
         height_mm: float,
         label: str,
         progress: int,
@@ -2713,7 +2865,7 @@ class InMemoryStore:
                     lift_speed_level=request.liftSpeedLevel,
                     enable_vehicle_alignment=request.enableVehicleAlignment,
                     book_id=book.id,
-                    takeout_mode=request.takeoutMode,
+                    takeout_mode=takeout_mode,
                 ),
             )
             self._update_takeout_task(
@@ -2739,6 +2891,7 @@ class InMemoryStore:
         book: Book,
         reference: Book,
         height_mm: float,
+        return_mode: str,
         label: str,
         progress: int,
         cancel: Event | None,
@@ -2751,23 +2904,40 @@ class InMemoryStore:
         )
         self._set_robot_arm_busy(request.robotId)
         try:
-            bookarm_task_id = self._create_bookarm_task_with_retry(
-                cancel,
-                lambda: client.create_midreturn_task(
+            def create_task() -> dict[str, Any]:
+                if return_mode == "end":
+                    return client.create_return_task(
+                        template_id=reference.templateId,
+                        target_height_mm=height_mm,
+                        source_slot=request.bookStandSlot,
+                        lift_speed_level=request.liftSpeedLevel,
+                        enable_vehicle_alignment=request.enableVehicleAlignment,
+                        book_id=book.id,
+                    )
+                return client.create_midreturn_task(
                     template_id=reference.templateId,
                     target_height_mm=height_mm,
                     source_slot=request.bookStandSlot,
                     lift_speed_level=request.liftSpeedLevel,
                     enable_vehicle_alignment=request.enableVehicleAlignment,
                     book_id=book.id,
-                ),
-            )
+                )
+
+            if return_mode == "end":
+                get_task = client.get_return_task
+                cancel_task = client.cancel_return_task
+                task_kind = "return"
+            else:
+                get_task = client.get_midreturn_task
+                cancel_task = client.cancel_midreturn_task
+                task_kind = "midreturn"
+            bookarm_task_id = self._create_bookarm_task_with_retry(cancel, create_task)
             self._update_takeout_task(
                 task_id,
                 workflowDetails={
                     **self._takeout_workflow_details(task_id),
                     "bookarmTaskId": bookarm_task_id,
-                    "bookarmTaskKind": "midreturn",
+                    "bookarmTaskKind": task_kind,
                 },
             )
             self._wait_for_bookarm_task(
@@ -2775,8 +2945,8 @@ class InMemoryStore:
                 client,
                 bookarm_task_id,
                 cancel,
-                get_task=client.get_midreturn_task,
-                cancel_task=client.cancel_midreturn_task,
+                get_task=get_task,
+                cancel_task=cancel_task,
                 flow_label=label,
             )
             if cancel is not None and cancel.is_set():
@@ -2865,6 +3035,7 @@ class InMemoryStore:
                     "y": target.y,
                     "yaw": target.yaw,
                     "speedMps": request.moveSpeedMps,
+                    **({"xToleranceM": 0.02} if request.navigationOnly else {}),
                 },
             ),
             user,

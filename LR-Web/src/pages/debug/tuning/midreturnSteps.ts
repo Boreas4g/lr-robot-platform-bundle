@@ -4,6 +4,7 @@ import {
 } from '../../circulation/components/TuningPanel';
 
 const JOINTS = ['J1', 'J2', 'J3', 'J4', 'J5', 'J6'];
+const XY = ['x', 'y'];
 const XYZ = ['x', 'y', 'z'];
 const RPY = ['rx', 'ry', 'rz'];
 
@@ -260,22 +261,8 @@ export const midreturnSteps: TuningStepDef[] = [
     fields: [openDegField('partial_release_deg', '松爪开角'), openSpeedField],
   },
   {
-    title: '再次推回',
-    hint: '松爪后再次推回（负值向架内），保证夹爪手指深入书缝。',
-    fields: [
-      {
-        path: 're_push_x_offset_cm',
-        label: '再推偏移 x',
-        unit: 'cm',
-        step: 0.5,
-        precision: 1,
-      },
-      durationField('re_push_duration_s', '运动时长'),
-    ],
-  },
-  {
     title: '推杆归位',
-    hint: '再次推回后推杆运动到指定位置，为后续下降/横移清出空间；到位容差与超时复用「推杆归零」卡片。',
+    hint: '再次推回前推杆运动到指定位置，为后续下降清出空间；到位容差与超时复用「推杆归零」卡片。',
     fields: [
       {
         path: 'rod_putback_deg',
@@ -286,6 +273,20 @@ export const midreturnSteps: TuningStepDef[] = [
         step: 1,
         precision: 1,
       },
+    ],
+  },
+  {
+    title: '再次推回',
+    hint: '读取当前实际末端位姿，仅叠加 X 偏移（负值向架内），Y/Z 与姿态保持不变，不依赖精抓或首次推回参数。',
+    fields: [
+      {
+        path: 're_push_x_offset_cm',
+        label: '再推偏移 x',
+        unit: 'cm',
+        step: 0.5,
+        precision: 1,
+      },
+      durationField('re_push_duration_s', '运动时长'),
     ],
   },
   {
@@ -309,26 +310,12 @@ export const midreturnSteps: TuningStepDef[] = [
   },
   {
     title: '闭合夹爪',
-    hint: '复用「闭合夹爪」卡片的闭爪参数；重新夹紧书本，横移时带着书走。',
+    hint: '复用「闭合夹爪」卡片的闭爪参数；重新夹紧书本，前移时带着书走。',
     fields: [],
   },
   {
-    title: '机械臂横移',
-    hint: '相对当前位置沿 Y 轴横移，带着书对齐书缝。',
-    fields: [
-      {
-        path: 'shift_y_offset_cm',
-        label: '横移偏移 y',
-        unit: 'cm',
-        step: 0.5,
-        precision: 1,
-      },
-      durationField('shift_duration_s', '运动时长'),
-    ],
-  },
-  {
     title: '书本前移',
-    hint: '夹爪保持闭合，带着书一起前移（正值向架外）到便于摄像头识别的位置。',
+    hint: '夹爪保持闭合，基于当前末端位置仅叠加 X 偏移（正值向架外），到便于摄像头识别的位置。',
     fields: [
       {
         path: 'carry_forward_x_offset_cm',
@@ -342,12 +329,12 @@ export const midreturnSteps: TuningStepDef[] = [
   },
   {
     title: '松开一点夹爪',
-    hint: '横移到位后轻微松开卸力，不是全开。',
+    hint: '书本前移到位后轻微松开卸力，不是全开。',
     fields: [openDegField('partial_release_deg', '松爪开角'), openSpeedField],
   },
   {
     title: '机械臂前移',
-    hint: '相对横移位沿 X 轴前移（正值向架外）。',
+    hint: '相对当前位置沿 X 轴前移（正值向架外）。',
     fields: [
       {
         path: 'forward_x_offset_cm',
@@ -379,88 +366,82 @@ export const midreturnSteps: TuningStepDef[] = [
     fields: [],
   },
   {
-    title: '轻闭合夹爪并向下移动',
-    hint: '在书槽完全闭合前，先轻闭合到指定角度，再沿 Z 轴向下移动指定距离；下移时长复用槽位的 grasp 时长。',
-    fields: [
-      openDegField('pickup_light_close_deg', '轻闭合角度'),
-      {
-        path: 'pickup_light_close_down_cm',
-        label: '下移距离',
-        unit: 'cm',
-        min: 0,
-        step: 0.5,
-        precision: 1,
-      },
-    ],
-  },
-  {
-    title: '闭合夹爪（书槽）',
-    hint: '接触书本后进入持续自适应夹持；随后持书直接进入预插入流程，复用「闭合夹爪」卡片的闭爪参数。',
-    fields: [],
-  },
-  {
-    title: '推杆',
-    hint: '同「推杆拨书」的动作形式：取回待还书后、插入链开始前，把推杆伸到辅助插入角度（默认 0° 不动）；速度/加速度与拨书等步骤共用。',
+    title: '推杆归位',
+    hint: '书槽取书阶段独立参数：运动到书槽后先把推杆收回归位，再轻闭、调整夹书深度并正式夹紧；与前期推杆归位角度互不影响。',
     fields: [
       {
-        path: 'rod_insert_deg',
-        label: '推杆角度',
+        path: 'pickup_rod_home_deg',
+        label: '书槽取书归位位置',
         unit: 'deg',
         min: -100,
         max: 90,
         step: 1,
         precision: 1,
       },
-      {
-        path: 'rod_speed',
-        label: '推杆速度',
-        min: 1,
-        step: 100,
-        precision: 0,
-      },
-      {
-        path: 'rod_acceleration',
-        label: '推杆加速度',
-        min: 1,
-        step: 10,
-        precision: 0,
-      },
     ],
   },
   {
-    title: '到预抓取位',
-    hint: '推杆后先 MoveL 返回所选书槽的 pre_grasp，避免从抓取位置直接进入预插入位时碰撞书槽；随后再进入预插入位。',
-    fields: [],
+    title: '轻闭夹爪（书槽）',
+    hint: '与末尾还书一致：书槽到位后先轻闭夹爪，为后续深度调整提供稳定接触；此步不是最终正式夹紧。',
+    fields: [openDegField('pickup_light_close_deg', '轻闭角度')],
   },
   {
-    title: '预插入位',
-    hint: '与取书的预抓取位同理：先 MovePByJ 到插入位外侧的预插入位，避免带着书横扫刮碰书立上的其他书。每次根据「识别目标书（插入前）」的新插入位和下方 y、z 偏移重新通过 IK 搜索可达的 x，不再执行固定 x；搜索结果不超过「预插入位 X 上限」。',
+    title: '调整夹书深度',
+    hint: '与末尾还书一致：读取当前实际末端位姿，叠加 Z 与 Rx/Ry/Rz 偏移，X/Y 保持不变；Z 正值向下、负值向上，运动时长使用所选槽位的 grasp_duration_s。',
     fields: [
       {
-        path: 'pre_insert_x_max_m',
-        label: '预插入位 X 上限（负值，越贴近 0 越靠外）',
-        unit: 'm',
-        min: -0.8,
-        max: -0.01,
-        step: 0.01,
-        precision: 2,
-      },
-      {
-        path: 'pre_insert_y_offset_cm',
-        label: '预插入 y 偏移（相对插入位）',
+        path: 'pickup_light_close_down_cm',
+        label: '向下调整量',
         unit: 'cm',
-        min: -50,
-        max: 50,
         step: 0.5,
         precision: 1,
       },
       {
-        path: 'pre_insert_z_offset_cm',
-        label: '预插入 z 偏移（相对插入位）',
-        unit: 'cm',
-        min: -50,
-        max: 50,
-        step: 0.5,
+        path: 'pickup_light_close_rpy_offset_deg',
+        label: '姿态偏移',
+        unit: 'deg',
+        components: RPY,
+        step: 1,
+        precision: 1,
+        fallback: [0, 0, 0],
+      },
+    ],
+  },
+  {
+    title: '闭合夹爪（书槽）',
+    hint: '与末尾还书一致：轻闭并完成深度调整后，正式夹住书立上的待还书。',
+    fields: [],
+  },
+  {
+    title: '回调试位',
+    hint: '与末尾还书一致：先 MoveL 撤到所选格口的 pre_grasp（撤回时长在槽位卡片编辑），再 MoveJ 回调试位。',
+    fields: debugFields,
+  },
+  {
+    title: '预插入位',
+    hint: '与末尾还书一致：末端 X = 识别目标 X + 本步 X 偏移，末端 Y = 识别目标 Y + 本步 Y 偏移，末端 Z = 本步绝对 Z；姿态使用本步独立设定的 Rx/Ry/Rz，不再进行 X 自动搜索。',
+    fields: [
+      {
+        path: 'pre_insert_xy_offset_m',
+        label: '预插入 XY 偏移（相对识别目标）',
+        unit: 'm',
+        components: XY,
+        step: 0.01,
+        precision: 3,
+      },
+      {
+        path: 'pre_insert_z_m',
+        label: '预插入 Z（基座绝对高度）',
+        unit: 'm',
+        step: 0.01,
+        precision: 3,
+      },
+      {
+        path: 'pre_insert_rpy_deg',
+        label: '预插入姿态',
+        unit: 'deg',
+        components: RPY,
+        step: 1,
         precision: 1,
       },
       durationField('pre_insert_duration_s', '运动时长'),
@@ -468,24 +449,22 @@ export const midreturnSteps: TuningStepDef[] = [
   },
   {
     title: '运动到插入位',
-    hint: 'y = 新识别目标书 Y + 插入 Y 偏移，x/z 复用「识别目标书（插入前）」的位姿，整体再叠加插入偏差；从预插入位短直线 MoveL 到位。',
+    hint: '与末尾还书一致：末端 X/Y = 识别目标 X/Y + 本步 XY 偏移，末端 Z = 本步绝对 Z；从预插入位短直线 MoveL 到位。',
     fields: [
       {
-        path: 'target_y_offset_cm',
-        label: '插入 Y 偏移（相对目标书）',
-        unit: 'cm',
-        min: -50,
-        max: 50,
-        step: 0.5,
-        precision: 1,
+        path: 'insert_xy_offset_m',
+        label: '插入 XY 偏移（相对识别目标）',
+        unit: 'm',
+        components: XY,
+        step: 0.01,
+        precision: 3,
       },
       {
-        path: 'insert_offset_cm',
-        label: '插入偏差',
-        unit: 'cm',
-        components: XYZ,
-        step: 0.5,
-        precision: 1,
+        path: 'insert_z_m',
+        label: '插入 Z（基座绝对高度）',
+        unit: 'm',
+        step: 0.01,
+        precision: 3,
       },
       {
         path: 'insert_rpy_deg',
@@ -500,40 +479,36 @@ export const midreturnSteps: TuningStepDef[] = [
   },
   {
     title: '推回书架',
-    hint: '基于插入位把书推入架内（x 负值向架内，z 可顺带微调高低，默认 0 保持插入高度）；回抽及其后的压书链都保持推回后的高度。',
+    hint: '与末尾还书一致：末端 X/Y = 识别目标 X/Y + 本步 XY 偏移，末端 Z = 本步绝对 Z；rx/ry/rz 为相对插入姿态的偏移。回抽及其后的压书链保持推回后的高度。',
     fields: [
       {
-        path: 'push_x_offset_cm',
-        label: '推入偏移 x',
-        unit: 'cm',
-        step: 0.5,
-        precision: 1,
+        path: 'push_xy_offset_m',
+        label: '推回 XY 偏移（相对识别目标）',
+        unit: 'm',
+        components: XY,
+        step: 0.01,
+        precision: 3,
       },
       {
-        path: 'push_z_offset_cm',
-        label: '推入偏移 z',
-        unit: 'cm',
-        step: 0.5,
+        path: 'push_z_offset_m',
+        label: '推回 Z（基座绝对高度）',
+        unit: 'm',
+        step: 0.01,
+        precision: 3,
+      },
+      {
+        path: 'push_rpy_deg',
+        label: '推入姿态偏移',
+        unit: 'deg',
+        components: RPY,
+        step: 1,
         precision: 1,
+        fallback: [0, 0, 0],
       },
       durationField('push_duration_s', '运动时长'),
     ],
   },
-  {
-    title: '推杆回位',
-    hint: '同「推杆归位」：推回书架后、松爪回抽前把推杆收回归位，避免扫到书本；与「推杆归位」共用归位角度，到位容差与超时复用「推杆归零」卡片。',
-    fields: [
-      {
-        path: 'rod_putback_deg',
-        label: '归位到达位置',
-        unit: 'deg',
-        min: -100,
-        max: 90,
-        step: 1,
-        precision: 1,
-      },
-    ],
-  },
+
   {
     title: '稍微张开夹爪',
     hint: '松开书本即可，不是全开。',
@@ -541,7 +516,7 @@ export const midreturnSteps: TuningStepDef[] = [
   },
   {
     title: '回抽',
-    hint: '基于推回位只变 x 把夹爪抽出书架（正值向架外）。',
+    hint: '基于推回位沿 x 回抽（正值向架外），姿态固定使用与末尾还书一致的 Rx 90° / Ry 0° / Rz 90°，避免继承推回的高角度姿态导致 IK 不可达。',
     fields: [
       {
         path: 'retract_x_offset_cm',
@@ -550,12 +525,22 @@ export const midreturnSteps: TuningStepDef[] = [
         step: 0.5,
         precision: 1,
       },
+      {
+        path: 'retract_rpy_deg',
+        label: '回抽姿态',
+        unit: 'deg',
+        components: RPY,
+        step: 1,
+        precision: 1,
+        fallback: [90, 0, 90],
+      },
       durationField('retract_duration_s', '运动时长'),
     ],
   },
+
   {
     title: '旋转',
-    hint: '基于回抽位转腕：rx/ry/rz 为相对回抽姿态的偏移（默认绕 Y 转 90°），让闭合的空爪侧对书脊；可同时叠加 z 偏移升降（默认 0 位置不变）。',
+    hint: '基于回抽位转腕：rx/ry/rz 为相对回抽姿态的偏移（默认绕 Y 转 90°），让空爪侧对书脊；z 偏移默认 0，保持回抽高度。',
     fields: [
       {
         path: 'rotate_z_offset_cm',
@@ -577,12 +562,12 @@ export const midreturnSteps: TuningStepDef[] = [
     ],
   },
   {
-    title: '推回',
-    hint: '旋转后基于旋转位只变 x 把空爪推回架内，压平书脊（负值向架内）。',
+    title: '压书',
+    hint: '旋转后基于旋转位只变 x，把空爪推回架内压平书脊（负值向架内）。',
     fields: [
       {
         path: 'press_x_offset_cm',
-        label: '推回偏移 x',
+        label: '压书偏移 x',
         unit: 'cm',
         step: 0.5,
         precision: 1,
@@ -591,12 +576,12 @@ export const midreturnSteps: TuningStepDef[] = [
     ],
   },
   {
-    title: '回抽',
-    hint: '压书后基于推回位只变 x 把夹爪抽出书架（正值向架外），随后回调试位。',
+    title: '二次回抽',
+    hint: '压书后基于压书位只变 x，把夹爪抽出书架（正值向架外），随后回调试位。',
     fields: [
       {
         path: 'press_retract_x_offset_cm',
-        label: '回抽偏移 x',
+        label: '二次回抽偏移 x',
         unit: 'cm',
         step: 0.5,
         precision: 1,

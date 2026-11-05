@@ -47,33 +47,30 @@ class SearchLogicTests(unittest.TestCase):
             0.0, -0.03, 0.25,
             math.radians(95.0), 0.0, math.radians(90.0),
         )
-        # Mirror production: insert_chain_poses forwards the plan's cap.
-        self.cap = {"x_max_m": self.plan.pre_insert_x_max_m}
+        self.cap = {"x_max_m": -0.20}
 
-    def test_first_converging_x_wins_below_the_cap(self):
+    def test_first_converging_x_wins_below_an_explicit_cap(self):
         arm = ScriptedArm(reachable_from_x_m=-0.30)
 
         x_m = search_pre_insert_x(arm, self.template, self.plan.debug_joint, **self.cap)
 
         self.assertEqual(x_m, -0.30)
         self.assertLess(x_m, 0.0)
-        # Probes start exactly at the plan cap (-0.20), then scan downward,
-        # each seeded at the debug joint pose like the preflight.
-        self.assertEqual(arm.probes[0][1].x_m, self.plan.pre_insert_x_max_m)
+        # An explicit cap still controls the shared search used by mid-return.
+        self.assertEqual(arm.probes[0][1].x_m, self.cap["x_max_m"])
         self.assertEqual(arm.probes[-1][1].x_m, -0.30)
         for _label, pose, seed in arm.probes:
-            self.assertLessEqual(pose.x_m, self.plan.pre_insert_x_max_m)
+            self.assertLessEqual(pose.x_m, self.cap["x_max_m"])
             self.assertEqual(seed, self.plan.debug_joint)
         # One step closer to 0 was probed and rejected first.
         self.assertTrue(any(pose.x_m == -0.29 for _l, pose, _s in arm.probes))
 
-    def test_fully_reachable_column_returns_the_cap_itself(self):
+    def test_fully_reachable_column_returns_an_explicit_cap(self):
         arm = ScriptedArm(reachable_from_x_m=1.0)  # every candidate reachable
 
         x_m = search_pre_insert_x(arm, self.template, self.plan.debug_joint, **self.cap)
 
-        # Never shallower than the cap: the very first candidate is the cap.
-        self.assertEqual(x_m, self.plan.pre_insert_x_max_m)
+        self.assertEqual(x_m, self.cap["x_max_m"])
         self.assertEqual(len(arm.probes), 1)
 
     def test_without_a_cap_the_scan_uses_the_module_default(self):
@@ -89,16 +86,22 @@ class SearchLogicTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "预插入位无可达 x"):
             search_pre_insert_x(arm, self.template, self.plan.debug_joint, **self.cap)
 
-    def test_return_plan_without_arm_is_rejected(self):
-        with self.assertRaisesRegex(RuntimeError, "requires the arm"):
-            insert_chain_poses(self.plan, BasePose(-0.35, -0.03, 0.25, 0.0, 0.0, 0.0))
-
-    def test_mid_return_searches_x_again_for_each_fresh_insert_target(self):
-        plan = replace(
-            MidReturnMotionPlan(),
-            pre_insert_y_offset_cm=1.0,
-            pre_insert_z_offset_cm=3.0,
+    def test_return_plan_adds_xy_offsets_to_the_recognized_target(self):
+        plan = replace(self.plan, pre_insert_rpy_deg=(80.0, 5.0, 70.0))
+        poses = insert_chain_poses(
+            plan, BasePose(9.0, 9.0, 9.0, 0.0, 0.0, 0.0)
         )
+
+        self.assertEqual(poses["pre_insert"].values()[:3], (9.30, 9.04, 0.04))
+        self.assertEqual(poses["insert"].values()[:3], (9.0, 9.04, 0.04))
+        self.assertEqual(poses["push"].values()[:3], (8.95, 9.04, 0.04))
+        self.assertAlmostEqual(poses["pre_insert"].rx_rad, math.radians(80.0))
+        self.assertAlmostEqual(poses["pre_insert"].ry_rad, math.radians(5.0))
+        self.assertAlmostEqual(poses["pre_insert"].rz_rad, math.radians(70.0))
+        self.assertAlmostEqual(poses["insert"].rx_rad, math.radians(95.0))
+
+    def test_mid_return_recomputes_positions_for_each_fresh_insert_target(self):
+        plan = MidReturnMotionPlan()
         arm = ScriptedArm(reachable_from_x_m=-0.36)
 
         first = insert_chain_poses(
@@ -108,18 +111,42 @@ class SearchLogicTests(unittest.TestCase):
             plan, BasePose(-0.42, -0.01, 0.28, 0.0, 0.0, 0.0), arm
         )
 
-        self.assertEqual(first["pre_insert"].x_m, -0.36)
-        self.assertEqual(second["pre_insert"].x_m, -0.36)
-        self.assertAlmostEqual(first["pre_insert"].y_m, -0.02)
-        self.assertAlmostEqual(first["pre_insert"].z_m, 0.28)
-        self.assertAlmostEqual(second["pre_insert"].y_m, 0.0)
-        self.assertAlmostEqual(second["pre_insert"].z_m, 0.31)
-        self.assertEqual(
-            [label for label, _pose, _seed in arm.probes],
-            ["pre_insert_x_search"] * 8,
+        self.assertAlmostEqual(first["pre_insert"].x_m, -0.05)
+        self.assertAlmostEqual(second["pre_insert"].x_m, -0.12)
+        self.assertAlmostEqual(first["pre_insert"].y_m, 0.01)
+        self.assertAlmostEqual(first["pre_insert"].z_m, 0.04)
+        self.assertAlmostEqual(second["pre_insert"].y_m, 0.03)
+        self.assertAlmostEqual(second["pre_insert"].z_m, 0.04)
+        self.assertEqual(arm.probes, [])
+
+    def test_mid_return_uses_target_xy_offsets_and_absolute_z(self):
+        plan = replace(
+            MidReturnMotionPlan(),
+            pre_insert_xy_offset_m=(0.30, 0.045),
+            pre_insert_z_m=0.265,
+            insert_xy_offset_m=(0.02, 0.03),
+            insert_z_m=0.29,
+            push_xy_offset_m=(-0.04, 0.03),
+            push_z_m=0.32,
         )
-        self.assertAlmostEqual(arm.probes[-1][1].y_m, 0.0)
-        self.assertAlmostEqual(arm.probes[-1][1].z_m, 0.31)
+
+        poses = insert_chain_poses(
+            plan,
+            BasePose(-0.35, -0.03, 0.25, 0.0, 0.0, 0.0),
+            ScriptedArm(reachable_from_x_m=1.0),
+        )
+
+        expected = {
+            "pre_insert": (-0.05, 0.015, 0.265),
+            "insert": (-0.33, 0.0, 0.29),
+            "push": (-0.39, 0.0, 0.32),
+        }
+        for name, expected_xyz in expected.items():
+            pose = poses[name]
+            for actual, expected_value in zip(
+                (pose.x_m, pose.y_m, pose.z_m), expected_xyz
+            ):
+                self.assertAlmostEqual(actual, expected_value, places=6)
 
     def test_take_post_grasp_searches_max_x_from_the_current_round_cap(self):
         pose = BasePose(0.21, 0.10, 0.30, 0.0, 0.0, 0.0)
@@ -165,20 +192,16 @@ class RealKinematicsSearchTests(unittest.TestCase):
         # Representative return-flow anchor: fresh-target y=-0.03, z clamped
         # to the 0.25 m floor, insert orientation from the plan.
         insert = BasePose(-0.35, -0.03, 0.25, 0.0, 0.0, 0.0).offset_cm(
-            plan.insert_offset_cm, rpy_deg=plan.insert_rpy_deg
+            (0.0, 0.0, 0.0), rpy_deg=plan.insert_rpy_deg
         )
 
-        x_m = search_pre_insert_x(
-            self.arm, insert, plan.debug_joint, x_max_m=plan.pre_insert_x_max_m
-        )
+        x_m = search_pre_insert_x(self.arm, insert, plan.debug_joint)
 
-        # The plan cap is honored…
         self.assertLess(x_m, 0.0)
-        self.assertLessEqual(x_m, plan.pre_insert_x_max_m)
-        # …the found pose passes the same preflight judgment…
+        self.assertLessEqual(x_m, PRE_INSERT_X_SEARCH_START_M)
+        # The found pose passes the same preflight judgment, and one step
+        # closer to 0 does not converge: x is the uncapped reachable maximum.
         self.arm.check_pose_reachable(replace(insert, x_m=x_m), plan.debug_joint, label="pre_insert")
-        # …and one step closer to 0 does not converge: the x is the maximum
-        # reachable below the cap.
         with self.assertRaisesRegex(RuntimeError, "did not converge|unreachable"):
             self.arm.check_pose_reachable(
                 replace(insert, x_m=round(x_m - PRE_INSERT_X_SEARCH_STEP_M, 6)),
@@ -190,13 +213,11 @@ class RealKinematicsSearchTests(unittest.TestCase):
         plan = ReturnBookMotionPlan()
         # Below the base: no x in the search range can converge.
         insert = BasePose(-0.35, -0.03, -0.20, 0.0, 0.0, 0.0).offset_cm(
-            plan.insert_offset_cm, rpy_deg=plan.insert_rpy_deg
+            (0.0, 0.0, 0.0), rpy_deg=plan.insert_rpy_deg
         )
 
         with self.assertRaisesRegex(RuntimeError, "预插入位无可达 x"):
-            search_pre_insert_x(
-                self.arm, insert, plan.debug_joint, x_max_m=plan.pre_insert_x_max_m
-            )
+            search_pre_insert_x(self.arm, insert, plan.debug_joint)
 
 
 class OffworkerReachabilityTests(unittest.TestCase):
@@ -222,7 +243,7 @@ class OffworkerReachabilityTests(unittest.TestCase):
     def test_probe_runs_while_the_worker_is_busy_with_a_long_motion(self):
         plan = ReturnBookMotionPlan()
         reachable = BasePose(-0.35, -0.03, 0.25, 0.0, 0.0, 0.0).offset_cm(
-            plan.insert_offset_cm, rpy_deg=plan.insert_rpy_deg
+            (0.0, 0.0, 0.0), rpy_deg=plan.insert_rpy_deg
         )
         entered = threading.Event()
         release = threading.Event()
@@ -251,7 +272,7 @@ class OffworkerReachabilityTests(unittest.TestCase):
     def test_probe_matches_the_worker_routed_judgment(self):
         plan = ReturnBookMotionPlan()
         reachable = BasePose(-0.35, -0.03, 0.25, 0.0, 0.0, 0.0).offset_cm(
-            plan.insert_offset_cm, rpy_deg=plan.insert_rpy_deg
+            (0.0, 0.0, 0.0), rpy_deg=plan.insert_rpy_deg
         )
         offworker = self.arm.check_pose_reachable_offworker(
             reachable, plan.debug_joint, label="probe"

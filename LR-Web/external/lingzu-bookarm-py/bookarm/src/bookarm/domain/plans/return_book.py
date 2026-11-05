@@ -12,16 +12,12 @@ from bookarm.domain.plans.take_book import GripperCommand
 
 @dataclass(frozen=True)
 class ReturnBookMotionPlan:
-    """Shared poses, offsets, and durations for the return-book workflow.
+    """Shared poses, positions, and durations for the return-book workflow.
 
     The flow picks the book to be returned from the calibrated book-stand
-    pickup slot, re-locates the reference book by its spine template, then
-    runs the same insertion pipeline as the mid-return flow: insert Y1 =
-    target grasp y + target_y_offset_cm, pre-insert staging, insert, push
-    into the shelf, partial release, retract and back to the debug pose.
-
-    All single-axis shifts are expressed as absolute poses chained off the
-    fresh vision target, so re-running one step stays idempotent.
+    pickup slot and re-locates the reference book. In the insert chain, target
+    grasp x/y plus each step's XY offset and its absolute arm-base z form the
+    end-effector target position. Each step also has an independent attitude.
     """
 
     zero_joint: JointPose = field(
@@ -37,38 +33,30 @@ class ReturnBookMotionPlan:
     debug_duration_s: float = 3.0
     # Open the gripper this far before the book-slot pickup.
     pickup_open_deg: float = 50.0
+    # Lightly close at the slot, then adjust grasp depth and attitude from the measured TCP.
+    pickup_light_close_deg: float = 70.0
+    pickup_light_close_down_cm: float = 1.0
+    pickup_light_close_rpy_offset_deg: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     pregrasp_duration_s: float = 3.0
-    # Insert Y1 = target grasp y + this offset (cm). The automated workflow
-    # and the tuning session both read it from this plan, so it is tuned here
-    # rather than passed per request.
-    target_y_offset_cm: float = 4.0
-    # Insert pose: x/z reused from the vision target and y=Y1, then shifted by
-    # this base-frame offset; orientation is insert_rpy_deg. rx beyond ~95 deg
-    # is outside the workspace at deep-shelf targets.
-    insert_offset_cm: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    # Rod homing runs after the debug pose and before target recognition.
+    rod_home_deg: float = 0.0
+    rod_speed: int = 1000
+    rod_acceleration: int = 50
+    rod_tolerance_deg: float = 1.5
+    rod_timeout_s: float = 12.0
+    # XY offsets from the recognized target, plus absolute arm-base z (metres).
+    pre_insert_xy_offset_m: Tuple[float, float] = (0.30, 0.04)
+    pre_insert_z_m: float = 0.04
+    insert_xy_offset_m: Tuple[float, float] = (0.0, 0.04)
+    insert_z_m: float = 0.04
+    push_xy_offset_m: Tuple[float, float] = (-0.05, 0.04)
+    push_z_m: float = 0.04
+    # Independent orientations for the pre-insert and insert poses. rx beyond
+    # ~95 deg is outside the workspace at deep-shelf targets.
+    pre_insert_rpy_deg: Tuple[float, float, float] = (95.0, 0.0, 90.0)
     insert_rpy_deg: Tuple[float, float, float] = (95.0, 0.0, 90.0)
-    # Reachability floor for the insert z (arm-base frame): at insert_rpy_deg
-    # the wrist runs into joint limits below ~0.25 m, so targets lower than
-    # this are clamped up to the reachable minimum instead of failing IK.
-    min_insert_z_m: float = 0.25
-    # Pre-insert staging pose, flown MovePByJ before the final MoveL approach
-    # so the book never sweeps across the stand neighbours. Its x is computed
-    # per target by an IK search for the numerically greatest reachable value
-    # (see application.use_cases.mid_return.search_pre_insert_x), so the pose
-    # hugs the outer reach boundary; y/z stay offsets from the insert pose
-    # (i.e. from the fresh recognition).
-    # 预插入位 x 上限（负值）；IK 搜索只在其以下取可达最大值，防止搜出过于
-    # 贴近本体、姿态翻转的解（2026-10-04 现场翻臂事故）。
-    pre_insert_x_max_m: float = -0.20
-    pre_insert_y_offset_cm: float = 0.0
-    pre_insert_z_offset_cm: float = 0.0
     pre_insert_duration_s: float = 3.0
     insert_duration_s: float = 3.0
-    # Push the book into the shelf from the insert pose: x drives further into
-    # the shelf (negative); z nudges the book up/down while pushing (中位还书
-    # 同样带 push_z_offset_cm，共享插入链直接读字段）。
-    push_x_offset_cm: float = -5.0
-    push_z_offset_cm: float = 0.0
     # Push-pose orientation offset relative to the insert pose's
     # insert_rpy_deg orientation (deg); (0, 0, 0) keeps the insert attitude
     # (末尾还书专用，中位还书没有这个旋钮，共享插入链按字段是否存在分支）。

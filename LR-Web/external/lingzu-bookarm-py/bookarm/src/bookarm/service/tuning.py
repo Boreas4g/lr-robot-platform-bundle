@@ -29,7 +29,9 @@ from fastapi import APIRouter, HTTPException, Query
 from bookarm.application.post_vision import take_book_grasp_poses
 from bookarm.application.use_cases.mid_return import (
     OffworkerArmProbe,
+    adjust_book_stand_grasp_depth,
     insert_chain_poses,
+    light_close_at_book_stand,
     stand_pickup_gripper_command,
 )
 from bookarm.domain.models.book import BookTarget, ShelfPlacementTarget, SpineTemplate
@@ -152,6 +154,12 @@ class FakeTuningArm:
     def read_joint_pose(self) -> JointPose:
         with self._lock:
             return self._joints
+
+    def tcp_pose(self, joints: JointPose) -> BasePose:
+        with self._lock:
+            if self.pose_moves:
+                return self.pose_moves[-1][1]
+            return BasePose(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
     def move_to_pose_by_move_j(self, target: BasePose, duration_s: float) -> None:
         self._require_enabled()
@@ -687,45 +695,47 @@ class TuningSession:
         take_steps = self._take_steps(plan)
         arm = self._devices.arm
 
+        def current_pose() -> BasePose:
+            return arm.tcp_pose(arm.read_joint_pose())
+
         def raised_pose() -> BasePose:
-            fine = self._book_target().grasp_pose.offset_cm(
-                plan.fine_grasp_offset_cm, rpy_deg=plan.fine_grasp_rpy_deg
-            )
-            push_in = fine.offset_cm((plan.push_in_x_offset_cm, 0.0, 0.0))
-            re_push = push_in.offset_cm((plan.re_push_x_offset_cm, 0.0, 0.0))
-            return re_push.offset_cm((0.0, 0.0, plan.raise_z_offset_cm))
+            return current_pose().offset_cm((0.0, 0.0, plan.raise_z_offset_cm))
 
-        def lower_pose() -> BasePose:
-            return raised_pose().offset_cm(
-                plan.lower_offset_cm, rpy_offset_deg=plan.lower_rpy_offset_deg
-            )
+        def raise_arm() -> Dict[str, Any]:
+            pose = raised_pose()
+            arm.move_l(pose, plan.raise_duration_s)
+            return {"base_pose": list(pose.values())}
 
-        def run_pose(pose: BasePose, duration_s: float) -> Dict[str, Any]:
-            arm.move_l(pose, duration_s)
+        def re_push_pose() -> BasePose:
+            return current_pose().offset_cm((plan.re_push_x_offset_cm, 0.0, 0.0))
+
+        def re_push() -> Dict[str, Any]:
+            pose = re_push_pose()
+            arm.move_l(pose, plan.re_push_duration_s)
             return {"base_pose": list(pose.values())}
 
         raise_step = TuningStep(
             "机械臂上移",
             True,
-            lambda: run_pose(raised_pose(), plan.raise_duration_s),
+            raise_arm,
             preview=lambda: _tcp_step_preview(
                 raised_pose(), plan.raise_duration_s, "move_l"
             ),
         )
-        lower_step = replace(
-            mid_steps[11],
-            action=lambda: run_pose(lower_pose(), plan.lower_duration_s),
+        re_push_step = TuningStep(
+            "再次推回(re_push_x)",
+            True,
+            re_push,
             preview=lambda: _tcp_step_preview(
-                lower_pose(), plan.lower_duration_s, "move_l"
+                re_push_pose(), plan.re_push_duration_s, "move_l"
             ),
         )
         return (
-            *mid_steps[:10],
+            *mid_steps[:9],
             raise_step,
-            mid_steps[10],
-            lower_step,
-            replace(mid_steps[13], name="完全闭合夹爪"),
-            *take_steps[8:],
+            mid_steps[9],
+            re_push_step,
+            *take_steps[7:],
         )
 
     def _take_steps(self, plan: TakeBookMotionPlan) -> Tuple[TuningStep, ...]:
@@ -949,8 +959,9 @@ class TuningSession:
         *,
         adaptive_hold: bool = False,
         retreat_name: Optional[str] = None,
+        after_slot_steps: Tuple[TuningStep, ...] = (),
     ) -> Tuple[TuningStep, ...]:
-        """Drive onto the slot and close; optionally append a debug retreat."""
+        """Drive onto the slot, light-close, adjust depth, close and retreat."""
 
         arm = self._devices.arm
         slot_name, close_name = names
@@ -964,24 +975,18 @@ class TuningSession:
                 "grasp_pose": list(pickup.grasp.values()),
             }
 
-        def light_close_down() -> Dict[str, Any]:
-            pickup = self._stand_pickup()
-            command = replace(
-                plan.gripper,
-                close_deg=plan.pickup_light_close_deg,
-                adaptive_carry=False,
+        def light_close() -> Dict[str, Any]:
+            return light_close_at_book_stand(arm, plan)
+
+        def adjust_depth() -> Dict[str, Any]:
+            return adjust_book_stand_grasp_depth(arm, self._stand_pickup(), plan)
+
+        def depth_preview() -> BasePose:
+            current = arm.tcp_pose(arm.read_joint_pose())
+            return current.offset_cm(
+                (0.0, 0.0, -float(plan.pickup_light_close_down_cm)),
+                rpy_offset_deg=plan.pickup_light_close_rpy_offset_deg,
             )
-            close_result = arm.close_gripper_monitored(command)
-            down_cm = float(plan.pickup_light_close_down_cm)
-            lowered = pickup.grasp.offset_cm((0.0, 0.0, -down_cm))
-            if down_cm != 0.0:
-                arm.move_l(lowered, pickup.grasp_duration_s)
-            return {
-                "gripper_close": close_result,
-                "base_pose": list(lowered.values()),
-                "light_close_deg": command.close_deg,
-                "down_cm": down_cm,
-            }
 
         def close_gripper() -> Dict[str, Any]:
             command = stand_pickup_gripper_command(plan) if adaptive_hold else plan.gripper
@@ -1009,21 +1014,22 @@ class TuningSession:
                 ),
             )
         ]
-        if adaptive_hold:
-            steps.append(
+        steps.extend(after_slot_steps)
+        steps.extend(
+            (
+                TuningStep("轻闭夹爪", False, light_close),
                 TuningStep(
-                    "轻闭合夹爪并向下移动",
+                    "调整夹书深度",
                     True,
-                    light_close_down,
+                    adjust_depth,
                     preview=lambda: _tcp_step_preview(
-                        self._stand_pickup().grasp.offset_cm(
-                            (0.0, 0.0, -float(plan.pickup_light_close_down_cm))
-                        ),
+                        depth_preview(),
                         self._stand_pickup().grasp_duration_s,
                         "move_l",
                     ),
-                )
+                ),
             )
+        )
         steps.append(TuningStep(close_name, False, close_gripper))
         if retreat_name is not None:
             steps.append(
@@ -1067,15 +1073,15 @@ class TuningSession:
         putback_rod_name: Optional[str] = None,
     ) -> Tuple[TuningStep, ...]:
         """预插入位 → 回抽 insert chain shared by the mid-return and return
-        sessions. The return plan exposes the same attribute names as the
-        mid-return plan, so the closures are plan-agnostic; ``names`` are the
-        per-kind step labels and ``target_resolver`` supplies the insert
-        anchor (both kinds: the synchronous 识别目标书 cache). ``extra_names``
-        labels the mid-return-only rotate → press → press-retract tail; the
-        steps are appended only when the plan also carries ``rotate_rpy_deg``,
-        so the return session never grows them. ``putback_rod_name`` labels
-        the mid-return-only rod-stow step between the push and the release;
-        it appears only when the plan carries ``rod_insert_deg``."""
+        sessions. Mid-return resolves its insert anchor through
+        ``target_resolver``; end-return uses the resolved target XY plus
+        per-step XY offsets and absolute Z values.
+        ``extra_names`` labels the mid-return-only rotate → press →
+        press-retract tail; the steps are appended only when the plan also
+        carries ``rotate_rpy_deg``, so the return session never grows them.
+        ``putback_rod_name`` labels the mid-return-only rod-stow step between
+        the push and the release; it appears only when the plan carries
+        ``rod_insert_deg``."""
 
         arm = self._devices.arm
         rod = self._devices.rod
@@ -1088,24 +1094,12 @@ class TuningSession:
         ) = names
 
         def insert_anchor_pose() -> BasePose:
-            """Pre-offset insert anchor: y = fresh-target grasp y +
-            plan.target_y_offset_cm; x/z from the fresh recognition, with z
-            clamped up to plan.min_insert_z_m, matching the workflow side."""
-
             grasp = target_resolver().grasp_pose
-            y1_m = grasp.y_m + float(plan.target_y_offset_cm) / 100.0
-            # Low insert targets run the wrist into joint limits at
-            # insert_rpy_deg; clamp z up to the reachable minimum rather
-            # than failing IK, exactly like the use cases.
-            z_m = max(grasp.z_m, float(plan.min_insert_z_m))
-            return BasePose(grasp.x_m, y1_m, z_m, 0.0, 0.0, 0.0)
+            return BasePose(grasp.x_m, grasp.y_m, 0.0, 0.0, 0.0, 0.0)
 
         def chain_poses() -> Dict[str, BasePose]:
-            # Shared with the workflow use cases. Pure computation, safe for
-            # previews: plans without a pinned pre_insert_x_m IK-search the
-            # outermost reachable x. The probes route off the arm command
-            # worker so an HTTP preview/step never queues behind a running
-            # motion; no motion is commanded either way.
+            # Shared with the workflow use cases: both return flows compute
+            # target-relative poses without an x search. No motion is commanded.
             return insert_chain_poses(plan, insert_anchor_pose(), OffworkerArmProbe(arm))
 
         def insert_pose() -> BasePose:
@@ -1260,16 +1254,16 @@ class TuningSession:
 
     def _mid_return_steps(self, plan: MidReturnMotionPlan) -> Tuple[TuningStep, ...]:
         """Mid-return steps: grasp and put back the neighbor, re-target,
-        pick up from the stand, then move directly to pre-insert and insert
-        at y = fresh-target y + plan.target_y_offset_cm.
+        pick up from the stand, then use the same target XY offsets and
+        absolute Z positions as end-return for pre-insert, insert and push.
 
-        The grasp chain mirrors TakeBookUseCase._grasp_book; the put-back and
-        clear-out moves are single-axis offsets chained off the fine-grasp
-        pose; the book slot comes from the book-stand pickup slot selected at
-        prepare time; the insert pose chains off the pre-pickup recognition
-        (x/z) and the configured y offset, because the put-back chain may
-        have shifted the neighbour book. Every step stays absolute and
-        idempotent, exactly like the take/return sessions.
+        The grasp chain mirrors TakeBookUseCase._grasp_book. The first push is
+        relative to the fine-grasp pose; re-push and the following clear-out
+        moves read the actual TCP pose and apply only their own axis offset.
+        The book slot comes from the book-stand pickup slot selected at prepare
+        time; the insert pose adds configured XY offsets to the pre-pickup
+        recognition and uses an independently configured absolute Z, because
+        the put-back chain may have shifted the neighbour book.
         """
 
         arm = self._devices.arm
@@ -1346,8 +1340,11 @@ class TuningSession:
             arm.open_gripper(plan.partial_release_deg, command)
             return {"open_deg": plan.partial_release_deg}
 
+        def current_pose() -> BasePose:
+            return arm.tcp_pose(arm.read_joint_pose())
+
         def re_push_pose() -> BasePose:
-            return push_in_pose().offset_cm((plan.re_push_x_offset_cm, 0.0, 0.0))
+            return current_pose().offset_cm((plan.re_push_x_offset_cm, 0.0, 0.0))
 
         def re_push() -> Dict[str, Any]:
             pose = re_push_pose()
@@ -1355,7 +1352,7 @@ class TuningSession:
             return {"base_pose": list(pose.values())}
 
         def lower_pose() -> BasePose:
-            return re_push_pose().offset_cm((0.0, 0.0, plan.lower_z_offset_cm))
+            return current_pose().offset_cm((0.0, 0.0, plan.lower_z_offset_cm))
 
         def lower() -> Dict[str, Any]:
             pose = lower_pose()
@@ -1377,31 +1374,18 @@ class TuningSession:
             )
             return {"rod_deg": plan.rod_putback_deg}
 
-        def rod_insert() -> Dict[str, Any]:
+        def pickup_rod_home() -> Dict[str, Any]:
             rod.move_to_deg(
-                plan.rod_insert_deg,
+                plan.pickup_rod_home_deg,
                 plan.rod_speed,
                 plan.rod_acceleration,
                 plan.rod_tolerance_deg,
                 plan.rod_timeout_s,
             )
-            return {"rod_deg": plan.rod_insert_deg}
-
-        def stand_pre_grasp() -> Dict[str, Any]:
-            pickup = self._stand_pickup()
-            arm.move_l(pickup.pre_grasp, pickup.retreat_duration_s)
-            return {"base_pose": list(pickup.pre_grasp.values())}
-
-        def shift_pose() -> BasePose:
-            return lower_pose().offset_cm((0.0, plan.shift_y_offset_cm, 0.0))
-
-        def shift() -> Dict[str, Any]:
-            pose = shift_pose()
-            arm.move_l(pose, plan.shift_duration_s)
-            return {"base_pose": list(pose.values())}
+            return {"rod_deg": plan.pickup_rod_home_deg}
 
         def carry_forward_pose() -> BasePose:
-            return shift_pose().offset_cm((plan.carry_forward_x_offset_cm, 0.0, 0.0))
+            return current_pose().offset_cm((plan.carry_forward_x_offset_cm, 0.0, 0.0))
 
         def carry_forward() -> Dict[str, Any]:
             pose = carry_forward_pose()
@@ -1409,7 +1393,7 @@ class TuningSession:
             return {"base_pose": list(pose.values())}
 
         def forward_pose() -> BasePose:
-            return carry_forward_pose().offset_cm((plan.forward_x_offset_cm, 0.0, 0.0))
+            return current_pose().offset_cm((plan.forward_x_offset_cm, 0.0, 0.0))
 
         def forward() -> Dict[str, Any]:
             pose = forward_pose()
@@ -1446,30 +1430,24 @@ class TuningSession:
                 preview=lambda: _tcp_step_preview(push_in_pose(), plan.push_in_duration_s, "move_l"),
             ),
             TuningStep("松开一点夹爪(partial_release_deg)", False, partial_release_gripper),
-            # 松爪后再推一次，保证夹爪手指深入书缝，后续全开才能撑在缝里。
+            TuningStep("推杆归位", False, rod_putback),
+            # 松爪并归位推杆后，从当前实际末端位置再沿 X 推一次。
             TuningStep(
                 "再次推回(re_push_x)",
                 True,
                 re_push,
                 preview=lambda: _tcp_step_preview(re_push_pose(), plan.re_push_duration_s, "move_l"),
             ),
-            TuningStep("推杆归位", False, rod_putback),
             TuningStep(
                 "机械臂下降(lower_z)",
                 True,
                 lower,
                 preview=lambda: _tcp_step_preview(lower_pose(), plan.lower_duration_s, "move_l"),
             ),
-            # 下降放稳后先完全张开撑开书缝，再闭合夹紧书本带着横移；
-            # 横移到位后轻微松开卸力，最后前移送书到位。
+            # 下降放稳后先完全张开撑开书缝，再闭合夹紧书本带着前移；
+            # 前移到位后轻微松开卸力，最后机械臂前移送书到位。
             TuningStep("完全张开夹爪(full_open_deg)", False, full_open_gripper),
             TuningStep("闭合夹爪", False, close_gripper),
-            TuningStep(
-                "机械臂横移(shift_y)",
-                True,
-                shift,
-                preview=lambda: _tcp_step_preview(shift_pose(), plan.shift_duration_s, "move_l"),
-            ),
             # 夹爪保持闭合，带着书一起前移到便于摄像头识别的位置。
             TuningStep(
                 "书本前移(carry_forward_x)",
@@ -1496,18 +1474,9 @@ class TuningSession:
             *self._stand_pickup_drive_steps(
                 plan,
                 ("运动到书槽(pre_grasp→grasp)", "闭合夹爪"),
-                adaptive_hold=True,
-            ),
-            TuningStep("推杆(rod_insert_deg)", False, rod_insert),
-            TuningStep(
-                "到预抓取位",
-                True,
-                stand_pre_grasp,
-                preview=lambda: _tcp_step_preview(
-                    self._stand_pickup().pre_grasp,
-                    self._stand_pickup().retreat_duration_s,
-                    "move_l",
-                ),
+                adaptive_hold=False,
+                retreat_name="回调试位",
+                after_slot_steps=(TuningStep("推杆归位", False, pickup_rod_home),),
             ),
             *self._insert_chain_steps(
                 plan,
@@ -1519,8 +1488,7 @@ class TuningSession:
                     "回抽(retract_x)",
                 ),
                 self._insert_book_target,
-                extra_names=("旋转(rotate_rpy)", "推回(press_x)", "回抽(press_retract_x)"),
-                putback_rod_name="推杆回位",
+                extra_names=("旋转", "压书", "二次回抽"),
             ),
             TuningStep(
                 "回调试位",
@@ -1532,10 +1500,18 @@ class TuningSession:
 
     def _return_steps(self, plan: ReturnBookMotionPlan) -> Tuple[TuningStep, ...]:
         """Return-book steps mirroring ReturnBookUseCase stage by stage:
-        debug pose, open the gripper, synchronously re-locate the reference
-        book (the arm sits idle at debug, so recognition never competes with
-        motion for CPU), stand-slot pickup (shared with the mid-return
-        session), then the shared insert chain."""
+        debug pose, open the gripper, home the rod, synchronously re-locate
+        the reference book, pick up from the stand, then run the insert chain."""
+
+        def rod_home() -> Dict[str, Any]:
+            self._devices.rod.move_to_deg(
+                plan.rod_home_deg,
+                plan.rod_speed,
+                plan.rod_acceleration,
+                plan.rod_tolerance_deg,
+                plan.rod_timeout_s,
+            )
+            return {"rod_deg": plan.rod_home_deg}
 
         return (
             TuningStep(
@@ -1545,6 +1521,7 @@ class TuningSession:
                 preview=lambda: _joints_step_preview(plan.debug_joint, plan.debug_duration_s),
             ),
             self._pickup_open_step(plan, "张开夹爪"),
+            TuningStep("推杆归零", False, rod_home),
             self._retarget_book_step("识别目标书"),
             *self._stand_pickup_drive_steps(
                 plan,
@@ -2047,8 +2024,8 @@ def create_sdk_tuning(
     is reused from the use cases to keep both entry points consistent.
 
     The mid-return plan lives on ``sdk._mid_return`` (seeded from the
-    persisted profile at composition); its insert Y offset comes from the
-    plan's ``target_y_offset_cm``.
+    persisted profile at composition); its insert positions use recognized
+    target XY plus per-step XY offsets and absolute Z values.
     """
 
     take_use_case = sdk._take_book

@@ -99,6 +99,20 @@ class ReturnServiceTests(unittest.TestCase):
         self.assertIsNone(view["error"])
         self.assertTrue(view["payload"])
 
+    def test_disable_vehicle_alignment_is_forwarded_to_the_workflow(self):
+        captured = {}
+        original_submit = self.runner.submit_return
+
+        def submit(request):
+            captured["request"] = request
+            return original_submit(request)
+
+        self.runner.submit_return = submit
+        response = create_return_task(self.client, enable_vehicle_alignment=False)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertFalse(captured["request"].enable_vehicle_alignment)
+
     def test_stop_after_stage_truncates_the_workflow(self):
         response = create_return_task(self.client, stop_after_stage="vision_retarget")
 

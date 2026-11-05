@@ -12,7 +12,7 @@ from bookarm.domain.plans.take_book import GripperCommand
 @dataclass(frozen=True)
 class MidTakeoutMotionPlan(MidReturnMotionPlan):
     gripper: GripperCommand = field(
-        default_factory=lambda: GripperCommand(kp=40.0, kd=3.0, carry_effort=0.2)
+        default_factory=lambda: GripperCommand(kp=40.0, kd=3.0, carry_effort=0.6)
     )
     raise_z_offset_cm: float = 3.0
     raise_duration_s: float = 2.0

@@ -139,7 +139,17 @@ export default function MapEditor() {
       setMaps((current) => [created, ...current]);
       setMapId(created.id);
       clearBrush();
-      message.success(`已保存为新地图版本：${created.name}`);
+      if (created.vehicleRegistered) {
+        message.success(`已保存为新地图版本并注册到车端：${created.name}`);
+      } else {
+        message.warning(
+          `已保存为新地图版本：${created.name}，但未注册到车端${
+            created.vehicleRegisterNote
+              ? `：${created.vehicleRegisterNote}`
+              : '。'
+          }`,
+        );
+      }
     } catch (error) {
       message.error(
         error instanceof Error ? error.message : '保存编辑地图失败',

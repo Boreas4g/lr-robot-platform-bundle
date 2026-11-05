@@ -83,6 +83,7 @@ class FakeArm:
         check_solution=None,
     ):
         self.joints = joints or JointPose.from_values((0, 0, 0, 0, 0, 0))
+        self.base_pose = BasePose(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         self.calls = []
         self.fail_at = fail_at
         self.enabled = enabled
@@ -112,6 +113,9 @@ class FakeArm:
     def read_joint_pose(self):
         return self.joints
 
+    def tcp_pose(self, joints):
+        return self.base_pose
+
     def disable_at_safe_pose(self, duration_s=3.0):
         self.calls.append(("disable_at_safe_pose", float(duration_s)))
         self.enabled = False
@@ -121,11 +125,15 @@ class FakeArm:
         if self.fail_at == "move_to_pose_by_move_j":
             raise RuntimeError("simulated arm MovePByJ failure")
         self.calls.append(("move_to_pose_by_move_j", target, duration_s))
+        if self.update_after_move:
+            self.base_pose = target
 
     def move_l(self, target, duration_s):
         if self.fail_at == "move_l":
             raise RuntimeError("simulated arm motion failure")
         self.calls.append(("move_l", target, duration_s))
+        if self.update_after_move:
+            self.base_pose = target
         if self.move_l_hook is not None:
             self.move_l_hook()
 
@@ -468,7 +476,7 @@ class TakeBookWorkflowTests(unittest.TestCase):
         self.assertEqual(command.open_speed_deg_s, 60.12)
         self.assertEqual(command.kp, 40.0)
         self.assertEqual(command.kd, 3.0)
-        self.assertEqual(command.effort, 0.5)
+        self.assertEqual(command.effort, 0.85)
 
     def test_book_grasp_uses_move_p_by_j_for_fine_grasp(self):
         sdk, arm, _reservation = _sdk(arm=FakeArm(enabled=True), slots={})

@@ -97,6 +97,7 @@ class BookarmClient:
         target_height_mm: float,
         source_slot: int,
         lift_speed_level: int,
+        enable_vehicle_alignment: bool = True,
         book_id: str | None = None,
     ) -> dict[str, Any]:
         fields = {
@@ -104,6 +105,7 @@ class BookarmClient:
             "target_height_mm": str(target_height_mm),
             "source_slot": str(source_slot),
             "lift_speed_level": str(lift_speed_level),
+            "enable_vehicle_alignment": str(enable_vehicle_alignment).lower(),
         }
         if book_id:
             fields["book_id"] = book_id

@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Dict, Optional
 
 from bookarm.api.requests import TakeBookRequest
 from bookarm.api.results import WorkflowTask
-from bookarm.application.use_cases.mid_flow import (
-    run_mid_grasp_chain,
-    run_mid_put_back_prefix,
-)
+from bookarm.application.use_cases.mid_flow import run_mid_grasp_chain
 from bookarm.application.use_cases.take_book import TakeBookUseCase
 from bookarm.domain.models.book import BookTarget
 from bookarm.domain.plans.mid_takeout import MidTakeoutMotionPlan
@@ -28,14 +26,28 @@ class MidTakeoutUseCase(TakeBookUseCase):
             raise RuntimeError("book target is missing")
         plan = self.plan
         grasp = run_mid_grasp_chain(self.arm, self.rod, self.engine, task, plan, target)
-        put_back = run_mid_put_back_prefix(
-            self.arm,
-            self.rod,
-            self.engine,
-            task,
-            plan,
-            grasp["fine_grasp_pose"],
+        push_in = grasp["fine_grasp_pose"].offset_cm((plan.push_in_x_offset_cm, 0.0, 0.0))
+        self.arm.move_l(push_in, plan.push_in_duration_s)
+        self.engine.raise_if_cancelled(task)
+        partial_command = replace(plan.gripper, open_deg=plan.partial_release_deg)
+        self.arm.open_gripper(plan.partial_release_deg, partial_command)
+        self.engine.raise_if_cancelled(task)
+        current = self.arm.tcp_pose(self.arm.read_joint_pose())
+        raised = current.offset_cm((0.0, 0.0, plan.raise_z_offset_cm))
+        self.arm.move_l(raised, plan.raise_duration_s)
+        self.engine.raise_if_cancelled(task)
+        self.rod.move_to_deg(
+            plan.rod_putback_deg,
+            plan.rod_speed,
+            plan.rod_acceleration,
+            plan.rod_tolerance_deg,
+            plan.rod_timeout_s,
         )
+        self.engine.raise_if_cancelled(task)
+        current = self.arm.tcp_pose(self.arm.read_joint_pose())
+        re_push = current.offset_cm((plan.re_push_x_offset_cm, 0.0, 0.0))
+        self.arm.move_l(re_push, plan.re_push_duration_s)
+        self.engine.raise_if_cancelled(task)
         close_result = ensure_grasp_contact(
             self.arm.close_gripper_monitored(plan.gripper),
             scenario="book lost before the mid-takeout full close",
@@ -50,8 +62,9 @@ class MidTakeoutUseCase(TakeBookUseCase):
             "mid_takeout": True,
             "pregrasp_base_pose": grasp["pregrasp_base_pose"],
             "fine_grasp_base_pose": grasp["fine_grasp_base_pose"],
-            "raise_base_pose": put_back.get("raise_base_pose"),
-            "lower_base_pose": put_back["lower_base_pose"],
+            "push_in_base_pose": push_in.values(),
+            "re_push_base_pose": re_push.values(),
+            "raise_base_pose": raised.values(),
             "post_grasp_base_pose": post_grasp.values(),
             "gripper_grasp_result": grasp["gripper_grasp_result"],
             "gripper_full_close_result": close_result,

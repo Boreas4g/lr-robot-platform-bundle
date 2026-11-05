@@ -129,10 +129,20 @@ export interface DispatchTask {
     shelfMoveTaskId?: string;
     shelf1Target?: { x: number; y: number; yaw: number };
     shelf2Target?: { x: number; y: number; yaw: number };
-    shelf1LiftHeightMm?: number;
-    shelf2LiftHeightMm?: number;
+    bookId?: string;
+    book2Id?: string;
+    book1LiftHeightMm?: number;
+    book2LiftHeightMm?: number;
+    referenceBook1LiftHeightMm?: number;
+    referenceBook2LiftHeightMm?: number;
+    book1TakeoutMode?: TakeoutMode;
+    book2TakeoutMode?: TakeoutMode;
+    book1ReturnMode?: ReturnMode;
+    book2ReturnMode?: ReturnMode;
     moveSpeedMps?: number;
     enableVehicleAlignment?: boolean;
+    navigationOnly?: boolean;
+    navigationCycles?: number;
     annotationNavigation?: boolean;
     /** 还书任务实际使用的还书模式（缺省为中位还书）。 */
     returnMode?: ReturnMode;

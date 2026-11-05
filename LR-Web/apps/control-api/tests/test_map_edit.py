@@ -47,6 +47,7 @@ def test_saved_map_edit_creates_a_new_version_without_changing_source(monkeypatc
         created = response.json()
         assert created["id"] != source_id
         assert created["name"] == "编辑地图"
+        assert created["vehicleRegistered"] is True
         assert (tmp_path / source_id / "map.pgm").read_bytes() == pgm_data
         assert (tmp_path / created["id"] / "map.pgm").read_bytes().endswith(bytes([0, 254, 0, 205]))
         assert (tmp_path / created["id"] / "preview.png").is_file()

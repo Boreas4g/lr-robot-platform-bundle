@@ -4,7 +4,7 @@ import {
 } from '../../circulation/components/TuningPanel';
 
 const JOINTS = ['J1', 'J2', 'J3', 'J4', 'J5', 'J6'];
-const XYZ = ['x', 'y', 'z'];
+const XY = ['x', 'y'];
 const RPY = ['rx', 'ry', 'rz'];
 
 const durationField = (path: string, label: string) => ({
@@ -70,8 +70,53 @@ export const returnSteps: TuningStepDef[] = [
     fields: [openDegField('pickup_open_deg', '开爪角度'), openSpeedField],
   },
   {
+    title: '推杆归零',
+    hint: '在识别目标书前将推杆收回归零，避免推杆遮挡相机或干扰后续取还书动作。',
+    fields: [
+      {
+        path: 'rod_home_deg',
+        label: '归零到达位置',
+        unit: 'deg',
+        min: -100,
+        max: 90,
+        step: 1,
+        precision: 1,
+      },
+      {
+        path: 'rod_speed',
+        label: '推杆速度',
+        min: 1,
+        step: 100,
+        precision: 1,
+      },
+      {
+        path: 'rod_acceleration',
+        label: '推杆加速度',
+        min: 1,
+        step: 10,
+        precision: 1,
+      },
+      {
+        path: 'rod_tolerance_deg',
+        label: '推杆到位容差',
+        unit: 'deg',
+        min: 0.1,
+        step: 0.1,
+        precision: 1,
+      },
+      {
+        path: 'rod_timeout_s',
+        label: '推杆超时',
+        unit: 's',
+        min: 1,
+        step: 1,
+        precision: 0,
+      },
+    ],
+  },
+  {
     title: '识别目标书',
-    hint: '在当前位姿拍摄书架照片并同步完成识别与选点（需数秒，期间机械臂在调试位等待，不与运动并行以降低整机负载）；识别成功后后续书立取书与插入链基于该目标点执行。使用「准备」的书脊模板。',
+    hint: '推杆归零后识别目标书并提供机械臂基座坐标系中的目标点；后续预插入、插入和推回步骤的末端 X/Y 由该目标点叠加各步 XY 偏移得到，Z 使用各步设定的基座绝对高度。',
     fields: [],
   },
   {
@@ -80,8 +125,35 @@ export const returnSteps: TuningStepDef[] = [
     fields: [],
   },
   {
+    title: '轻闭夹爪',
+    hint: '书槽到位后先轻闭夹爪，为后续深度调整提供稳定接触；此步不是最终正式夹紧。',
+    fields: [openDegField('pickup_light_close_deg', '轻闭角度')],
+  },
+  {
+    title: '调整夹书深度',
+    hint: '读取当前实际末端位姿，叠加 Z 与 Rx/Ry/Rz 偏移，X/Y 保持不变；Z 正值向下、负值向上，运动时长使用所选槽位的 grasp_duration_s。',
+    fields: [
+      {
+        path: 'pickup_light_close_down_cm',
+        label: '向下调整量',
+        unit: 'cm',
+        step: 0.5,
+        precision: 1,
+      },
+      {
+        path: 'pickup_light_close_rpy_offset_deg',
+        label: '姿态偏移',
+        unit: 'deg',
+        components: RPY,
+        step: 1,
+        precision: 1,
+        fallback: [0, 0, 0],
+      },
+    ],
+  },
+  {
     title: '闭合夹爪',
-    hint: '夹住书立上的待还书。',
+    hint: '轻闭并完成深度调整后，正式夹住书立上的待还书。',
     fields: [],
   },
   {
@@ -91,33 +163,29 @@ export const returnSteps: TuningStepDef[] = [
   },
   {
     title: '预插入位',
-    hint: '与取书的预抓取位同理：先 MovePByJ 到插入位外侧的预插入位，避免带着书横扫刮碰书立上的其他书。y、z 按「识别目标书」的目标点加偏移固定后，x 由 IK 自动搜索可达的最大值，但不超过「预插入位 X 上限」（默认 -0.20m：过浅的解会让臂翻到别扭构型）。',
+    hint: '末端 X = 识别目标 X + 本步 X 偏移，末端 Y = 识别目标 Y + 本步 Y 偏移，末端 Z = 本步绝对 Z；姿态使用本步独立设定的 Rx/Ry/Rz。',
     fields: [
       {
-        path: 'pre_insert_x_max_m',
-        label: '预插入位 X 上限（负值，越贴近 0 越靠外）',
+        path: 'pre_insert_xy_offset_m',
+        label: '预插入 XY 偏移（相对识别目标）',
         unit: 'm',
-        min: -0.8,
-        max: -0.01,
+        components: XY,
         step: 0.01,
-        precision: 2,
+        precision: 3,
       },
       {
-        path: 'pre_insert_y_offset_cm',
-        label: '预插入 y 偏移（相对插入位）',
-        unit: 'cm',
-        min: -50,
-        max: 50,
-        step: 0.5,
-        precision: 1,
+        path: 'pre_insert_z_m',
+        label: '预插入 Z（基座绝对高度）',
+        unit: 'm',
+        step: 0.01,
+        precision: 3,
       },
       {
-        path: 'pre_insert_z_offset_cm',
-        label: '预插入 z 偏移（相对插入位）',
-        unit: 'cm',
-        min: -50,
-        max: 50,
-        step: 0.5,
+        path: 'pre_insert_rpy_deg',
+        label: '预插入姿态',
+        unit: 'deg',
+        components: RPY,
+        step: 1,
         precision: 1,
       },
       durationField('pre_insert_duration_s', '运动时长'),
@@ -125,24 +193,22 @@ export const returnSteps: TuningStepDef[] = [
   },
   {
     title: '运动到插入位',
-    hint: 'y = 识别目标书的 Y + 插入 Y 偏移，x/z 复用其位姿，整体再叠加插入偏差；从预插入位短直线 MoveL 到位。',
+    hint: '末端 X/Y = 识别目标 X/Y + 本步 XY 偏移，末端 Z = 本步绝对 Z；从预插入位短直线 MoveL 到位。',
     fields: [
       {
-        path: 'target_y_offset_cm',
-        label: '插入 Y 偏移（相对目标书）',
-        unit: 'cm',
-        min: -50,
-        max: 50,
-        step: 0.5,
-        precision: 1,
+        path: 'insert_xy_offset_m',
+        label: '插入 XY 偏移（相对识别目标）',
+        unit: 'm',
+        components: XY,
+        step: 0.01,
+        precision: 3,
       },
       {
-        path: 'insert_offset_cm',
-        label: '插入偏差',
-        unit: 'cm',
-        components: XYZ,
-        step: 0.5,
-        precision: 1,
+        path: 'insert_z_m',
+        label: '插入 Z（基座绝对高度）',
+        unit: 'm',
+        step: 0.01,
+        precision: 3,
       },
       {
         path: 'insert_rpy_deg',
@@ -157,21 +223,22 @@ export const returnSteps: TuningStepDef[] = [
   },
   {
     title: '推回书架',
-    hint: '基于插入位把书推入架内（x 负值向架内，z 可顺带微调高低；rx/ry/rz 为相对插入姿态的偏移，0 表示保持插入姿态）。',
+    hint: '末端 X/Y = 识别目标 X/Y + 本步 XY 偏移，末端 Z = 本步绝对 Z；rx/ry/rz 为相对插入姿态的偏移。',
     fields: [
       {
-        path: 'push_x_offset_cm',
-        label: '推入偏移 x',
-        unit: 'cm',
-        step: 0.5,
-        precision: 1,
+        path: 'push_xy_offset_m',
+        label: '推回 XY 偏移（相对识别目标）',
+        unit: 'm',
+        components: XY,
+        step: 0.01,
+        precision: 3,
       },
       {
-        path: 'push_z_offset_cm',
-        label: '推入偏移 z',
-        unit: 'cm',
-        step: 0.5,
-        precision: 1,
+        path: 'push_z_m',
+        label: '推回 Z（基座绝对高度）',
+        unit: 'm',
+        step: 0.01,
+        precision: 3,
       },
       {
         path: 'push_rpy_deg',

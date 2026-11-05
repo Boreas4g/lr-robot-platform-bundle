@@ -28,7 +28,7 @@ def generate_launch_description():
                         "y_tolerance": 0.1,
                         "yaw_tolerance": 0.02,
                         "max_linear_speed": 0.05,
-                        "max_angular_speed": 0.12,
+                        "max_angular_speed": 0.20,
                         "k_x": 1.0,
                         "k_y": 1.0,
                         "k_yaw": 1.0,

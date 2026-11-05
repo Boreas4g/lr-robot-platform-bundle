@@ -77,6 +77,7 @@ class FakeArm:
         self.move_l_hook = move_l_hook
         self.unreachable_labels = set(unreachable_labels)
         self.check_solution = check_solution or JointPose.from_values((0.11, 0.12, 0.13, 0.14, 0.15, 0.16))
+        self.current_pose = None
 
     def is_enabled(self):
         self.calls.append("is_enabled")
@@ -89,15 +90,20 @@ class FakeArm:
     def read_joint_pose(self):
         return self.joints
 
+    def tcp_pose(self, joints):
+        return self.current_pose
+
     def move_j(self, target, duration_s):
         self.calls.append(("move_j", target, duration_s))
         self.joints = target
 
     def move_to_pose_by_move_j(self, target, duration_s):
         self.calls.append(("move_to_pose_by_move_j", target, duration_s))
+        self.current_pose = target
 
     def move_l(self, target, duration_s):
         self.calls.append(("move_l", target, duration_s))
+        self.current_pose = target
         if self.move_l_hook is not None:
             self.move_l_hook()
 
@@ -127,6 +133,7 @@ class FakeRod:
 ALL_STAGES = [
     "lift_move",
     "arm_debug_pose",
+    "rod_home",
     "vision_retarget",
     "post_vision_align",
     "book_stand_pickup",
@@ -141,6 +148,7 @@ def make_request(
     slot=BookStandSlot.SLOT_1,
     stop_after=ReturnBookStage.SHELF_INSERT,
     speed_level=2,
+    enable_vehicle_alignment=True,
 ):
     return ReturnBookRequest(
         book=BookIdentity("return-book-1"),
@@ -148,6 +156,7 @@ def make_request(
         left_neighbor_spine_template=SpineTemplate(Path("left-neighbor.jpeg")),
         source_slot=slot,
         lift_speed_level=speed_level,
+        enable_vehicle_alignment=enable_vehicle_alignment,
         stop_after_stage=stop_after,
     )
 
@@ -184,7 +193,7 @@ class ReturnBookWorkflowTests(unittest.TestCase):
         use_case.execute(task, request)
         return task
 
-    def test_runs_all_seven_stages_in_order(self):
+    def test_runs_all_stages_in_order(self):
         use_case, arm, vision, lift, reservation = self.build()
 
         task = self.run_case(use_case, make_request())
@@ -202,56 +211,73 @@ class ReturnBookWorkflowTests(unittest.TestCase):
         self.assertEqual(
             arm.calls[-1], ("move_j", self.plan.debug_joint, self.plan.debug_duration_s)
         )
-        # The rod is never touched by the return flow.
-        self.assertEqual(self.rod.calls, [])
+        self.assertEqual(self.rod.calls, [(0.0, 1000, 50, 1.5, 12.0)])
 
-    def test_insert_target_computes_the_chain_with_z_clamp_and_searched_x(self):
+    def test_stand_pickup_light_closes_then_adjusts_from_measured_tcp(self):
+        arm = FakeArm(enabled=True)
+        measured = BasePose(-0.11, -0.44, 0.27, 1.4, 0.1, 2.9)
+        arm.tcp_pose = lambda _joints: measured
+        use_case, arm, _vision, _lift, _reservation = self.build(arm=arm)
+        use_case.plan = replace(
+            self.plan,
+            pickup_light_close_down_cm=0.0,
+            pickup_light_close_rpy_offset_deg=(3.0, -2.0, 4.0),
+        )
+
+        task = self.run_case(use_case, make_request())
+
+        self.assertEqual(task.state, TaskState.SUCCEEDED)
+        closes = [call for call in arm.calls if call[0] == "close_gripper_monitored"]
+        self.assertEqual(len(closes), 2)
+        self.assertEqual(closes[0][1].close_deg, self.plan.pickup_light_close_deg)
+        self.assertFalse(closes[0][1].adaptive_carry)
+        self.assertEqual(closes[1][1], self.plan.gripper)
+        adjusted = measured.offset_cm(
+            (0.0, 0.0, -use_case.plan.pickup_light_close_down_cm),
+            rpy_offset_deg=(3.0, -2.0, 4.0),
+        )
+        move_l_calls = [call for call in arm.calls if call[0] == "move_l"]
+        self.assertEqual(move_l_calls[1], ("move_l", adjusted, 2.0))
+        self.assertLess(arm.calls.index(closes[0]), arm.calls.index(move_l_calls[1]))
+        self.assertLess(arm.calls.index(move_l_calls[1]), arm.calls.index(closes[1]))
+        pickup_stage = next(
+            stage for stage in task.result.stages if stage.name == "book_stand_pickup"
+        )
+        self.assertEqual(pickup_stage.details["current_base_pose"], list(measured.values()))
+        self.assertEqual(pickup_stage.details["base_pose"], list(adjusted.values()))
+
+    def test_insert_target_uses_target_xy_offsets_and_absolute_z(self):
         use_case, arm, vision, _lift, _reservation = self.build()
 
         task = self.run_case(use_case, make_request())
 
         self.assertEqual(task.state, TaskState.SUCCEEDED)
-        # The recognition details surface on the vision stage…
         vision_stage = next(stage for stage in task.result.stages if stage.name == "vision_retarget")
         self.assertEqual(
             vision_stage.details["insert_book_target_grasp_base_pose"],
             vision.target.grasp_pose.values(),
         )
         self.assertEqual(vision_stage.details["capture_id"], "capture-return-1")
-        # …and the insert stage carries the computed target: Y1 = target
-        # grasp y (-0.07) + default 4 cm offset = -0.03; z (0.23) is below
-        # the plan's reachability floor and is clamped to 0.25.
         insert_stage = next(stage for stage in task.result.stages if stage.name == "insert_target")
-        self.assertAlmostEqual(insert_stage.details["y1_m"], -0.03)
-        self.assertAlmostEqual(insert_stage.details["target_y_offset_cm"], 4.0)
-        self.assertAlmostEqual(insert_stage.details["min_insert_z_m"], 0.25)
-        self.assertIs(insert_stage.details["insert_z_clamped"], True)
-        self.assertAlmostEqual(insert_stage.details["insert_target_base_pose"][2], 0.25)
-        # The pre-insert x is IK-searched below the plan's -0.20 m cap (the
-        # fake arm reaches everything, so the cap itself wins) and reported
-        # on the stage.
-        self.assertAlmostEqual(insert_stage.details["pre_insert_x_m"], -0.20)
-        # Pre-insert flies MovePByJ to the searched x with y/z chained off
-        # the insert pose; the final insert is a short linear move.
-        # Push x-5; retract x+10 after release.
+        self.assertEqual(insert_stage.details["insert_xy_offset_m"], [0.0, 0.04])
+        self.assertEqual(insert_stage.details["insert_z_m"], 0.04)
+        self.assertAlmostEqual(insert_stage.details["pre_insert_x_m"], -0.05)
         pose_moves = [
             call
             for call in arm.calls
             if isinstance(call, tuple) and call[0] == "move_to_pose_by_move_j"
         ]
         pre_insert = pose_moves[-1][1]
-        self.assertAlmostEqual(pre_insert.x_m, -0.20)
-        self.assertAlmostEqual(pre_insert.y_m, -0.03)
-        self.assertAlmostEqual(pre_insert.z_m, 0.25)
+        for actual, expected in zip(pre_insert.values()[:3], (-0.05, -0.03, 0.04)):
+            self.assertAlmostEqual(actual, expected)
         self.assertAlmostEqual(pre_insert.rx_rad, math.radians(95.0))
         move_l_poses = [call[1] for call in arm.calls if call[0] == "move_l"]
         insert, push, retract = move_l_poses[-3:]
-        self.assertAlmostEqual(insert.x_m, -0.35)
-        self.assertAlmostEqual(insert.y_m, -0.03)
-        self.assertAlmostEqual(insert.z_m, 0.25)
+        for actual, expected in zip(insert.values()[:3], (-0.35, -0.03, 0.04)):
+            self.assertAlmostEqual(actual, expected)
         self.assertAlmostEqual(insert.rx_rad, math.radians(95.0))
-        self.assertAlmostEqual(push.x_m, -0.40)
-        self.assertAlmostEqual(push.y_m, -0.03)
+        for actual, expected in zip(push.values()[:3], (-0.40, -0.03, 0.04)):
+            self.assertAlmostEqual(actual, expected)
         self.assertAlmostEqual(retract.x_m, -0.30)
         release = [call for call in arm.calls if call[0] == "open_gripper"][-1]
         self.assertEqual(release[1], 50.0)
@@ -260,42 +286,47 @@ class ReturnBookWorkflowTests(unittest.TestCase):
             arm.calls[-1], ("move_j", self.plan.debug_joint, self.plan.debug_duration_s)
         )
 
-    def test_insert_target_honours_plan_y_offset(self):
+    def test_insert_target_honours_xy_offsets_and_absolute_z(self):
         use_case, arm, _vision, _lift, _reservation = self.build()
-        use_case.plan = replace(self.plan, target_y_offset_cm=7.5)
+        use_case.plan = replace(
+            self.plan, insert_xy_offset_m=(-0.01, 0.075), insert_z_m=0.28
+        )
 
         task = self.run_case(use_case, make_request())
 
         self.assertEqual(task.state, TaskState.SUCCEEDED)
         insert_stage = next(stage for stage in task.result.stages if stage.name == "insert_target")
-        self.assertAlmostEqual(insert_stage.details["y1_m"], 0.005)
+        self.assertEqual(insert_stage.details["insert_xy_offset_m"], [-0.01, 0.075])
+        self.assertEqual(insert_stage.details["insert_z_m"], 0.28)
         move_l_poses = [call[1] for call in arm.calls if call[0] == "move_l"]
-        self.assertAlmostEqual(move_l_poses[-3].y_m, 0.005)
+        for actual, expected in zip(move_l_poses[-3].values()[:3], (-0.36, 0.005, 0.28)):
+            self.assertAlmostEqual(actual, expected)
 
     def test_hot_swapped_plan_applies_to_the_next_run(self):
         use_case, arm, _vision, _lift, _reservation = self.build()
-        use_case.plan = replace(self.plan, push_x_offset_cm=-8.0)
+        use_case.plan = replace(self.plan, push_xy_offset_m=(-0.08, 0.05), push_z_m=0.26)
 
         task = self.run_case(use_case, make_request())
 
         self.assertEqual(task.state, TaskState.SUCCEEDED)
         move_l_poses = [call[1] for call in arm.calls if call[0] == "move_l"]
         push = move_l_poses[-2]
-        self.assertAlmostEqual(push.x_m, -0.43)
+        for actual, expected in zip(push.values()[:3], (-0.43, -0.02, 0.26)):
+            self.assertAlmostEqual(actual, expected)
 
-    def test_push_applies_plan_z_offset(self):
-        # 推回书架除 x 偏移外支持 z 偏移（两个 plan 共有）；回抽以推回位为基
-        # 准，跟随同一个 z。
+    def test_retract_follows_the_configured_push_position(self):
         use_case, arm, _vision, _lift, _reservation = self.build()
-        use_case.plan = replace(self.plan, push_z_offset_cm=-2.0)
+        use_case.plan = replace(self.plan, push_xy_offset_m=(-0.07, 0.06), push_z_m=0.23)
 
         task = self.run_case(use_case, make_request())
 
         self.assertEqual(task.state, TaskState.SUCCEEDED)
         move_l_poses = [call[1] for call in arm.calls if call[0] == "move_l"]
-        insert, push, retract = move_l_poses[-3:]
-        self.assertAlmostEqual(push.z_m, insert.z_m - 0.02)
-        self.assertAlmostEqual(retract.z_m, push.z_m)
+        push, retract = move_l_poses[-2:]
+        for actual, expected in zip(push.values()[:3], (-0.42, -0.01, 0.23)):
+            self.assertAlmostEqual(actual, expected)
+        for actual, expected in zip(retract.values()[:3], (-0.32, -0.01, 0.23)):
+            self.assertAlmostEqual(actual, expected)
 
     def test_push_applies_plan_rpy_offset(self):
         # 推回书架支持姿态偏移（末尾还书专用，相对插入姿态）；回抽位置仍以
@@ -351,6 +382,20 @@ class ReturnBookWorkflowTests(unittest.TestCase):
         self.assertAlmostEqual(push.ry_rad, insert.ry_rad)
         self.assertAlmostEqual(push.rz_rad, insert.rz_rad)
 
+    def test_vehicle_alignment_can_be_disabled_by_the_request(self):
+        use_case, arm, _vision, _lift, _reservation = self.build()
+        use_case.vehicle_align = object()
+
+        task = self.run_case(
+            use_case, make_request(enable_vehicle_alignment=False)
+        )
+
+        self.assertEqual(task.state, TaskState.SUCCEEDED)
+        align_stage = next(
+            stage for stage in task.result.stages if stage.name == "post_vision_align"
+        )
+        self.assertEqual(align_stage.details["align_skipped"], "disabled_by_request")
+
     def test_vision_failure_fails_before_the_pickup_without_recovery(self):
         use_case, arm, _vision, _lift, reservation = self.build(vision=FakeVision(fail=True))
 
@@ -360,22 +405,27 @@ class ReturnBookWorkflowTests(unittest.TestCase):
         self.assertEqual(task.state, TaskState.FAILED)
         self.assertEqual(
             [stage.name for stage in task.result.stages],
-            ["lift_move", "arm_debug_pose", "vision_retarget"],
+            ["lift_move", "arm_debug_pose", "rod_home", "vision_retarget"],
         )
         self.assertIn("simulated spine detection failure", task.result.error)
         self.assertNotIn(("move_to_pose_by_move_j", self.pre_grasp, 4.0), arm.calls)
         self.assertTrue(reservation.released)
 
-    def test_unreachable_x_search_fails_at_insert_target_with_recovery(self):
+    def test_fixed_positions_never_run_the_legacy_x_search(self):
         arm = FakeArm(enabled=True, unreachable_labels={"pre_insert_x_search"})
         use_case, arm, _vision, _lift, reservation = self.build(arm=arm)
 
         task = self.run_case(use_case, make_request())
 
-        # The pickup completed, so the arm holds the book: recovery required.
-        self.assertEqual(task.state, TaskState.RECOVERY_REQUIRED)
-        self.assertEqual(task.result.stages[-1].name, "insert_target")
-        self.assertIn("预插入位无可达 x", task.result.error)
+        self.assertEqual(task.state, TaskState.SUCCEEDED)
+        self.assertFalse(
+            any(
+                isinstance(call, tuple)
+                and call[0] == "check_pose_reachable"
+                and call[1] == "pre_insert_x_search"
+                for call in arm.calls
+            )
+        )
         self.assertIn(("move_l", self.pre_grasp, 2.5), arm.calls)
         self.assertTrue(reservation.released)
 
@@ -431,7 +481,7 @@ class ReturnBookWorkflowTests(unittest.TestCase):
     @patch("bookarm.domain.policies.gripper.GRASP_CONTACT_CHECK_ENABLED", True)
     def test_empty_stand_pickup_requires_recovery_before_any_retreat(self):
         use_case, arm, _vision, _lift, reservation = self.build(
-            arm=FakeArm(enabled=True, close_reasons=["timeout"])
+            arm=FakeArm(enabled=True, close_reasons=["object_contact", "timeout"])
         )
 
         task = self.run_case(use_case, make_request())
@@ -442,10 +492,11 @@ class ReturnBookWorkflowTests(unittest.TestCase):
             "gripper closed without contact (empty slot or misalignment)",
             task.result.error,
         )
-        # Only the drive onto the slot ran; the retreat never followed an
-        # empty close.
+        # The light close and depth adjustment ran, but the empty final close
+        # prevents the retreat.
+        adjusted = self.grasp.offset_cm((0.0, 0.0, -self.plan.pickup_light_close_down_cm))
         move_l_calls = [call for call in arm.calls if call[0] == "move_l"]
-        self.assertEqual(move_l_calls, [("move_l", self.grasp, 2.0)])
+        self.assertEqual(move_l_calls, [("move_l", self.grasp, 2.0), ("move_l", adjusted, 2.0)])
         self.assertTrue(reservation.released)
 
     def test_stand_pickup_reaching_its_target_counts_as_a_pickup(self):
@@ -508,9 +559,9 @@ class ReturnBookWorkflowTests(unittest.TestCase):
         holder = {}
 
         def on_move_l():
-            # move_l #1/#2: slot grasp and retreat; #3: the insert approach.
+            # Slot grasp, depth adjustment and retreat precede the insert approach.
             holder["count"] = holder.get("count", 0) + 1
-            if holder["count"] == 3:
+            if holder["count"] == 4:
                 manager.cancel(holder["task_id"])
 
         arm = FakeArm(enabled=True, move_l_hook=on_move_l)
@@ -585,29 +636,23 @@ class ReturnBookReachabilityTests(unittest.TestCase):
 
         self.assertEqual(task.state, TaskState.SUCCEEDED)
         checks = self._checks(arm)
-        # One search probe at insert_target (fake arm: first candidate wins),
-        # then the four-pose preflight at reachability_check; shelf_insert
-        # reuses the cached poses and probes nothing again.
+        # Fixed positions need no x-search probe; the four-pose preflight runs
+        # once and shelf_insert reuses the cached poses.
         self.assertEqual(
             [call[1] for call in checks],
-            ["pre_insert_x_search", "pre_insert", "insert", "push", "retract"],
+            ["pre_insert", "insert", "push", "retract"],
         )
-        # Seeded from the debug pose (the stand pickup parks the arm there);
-        # the search probe uses the same seed, then each solved pose seeds
-        # the next one.
         self.assertEqual(checks[0][3], self.plan.debug_joint)
-        self.assertEqual(checks[1][3], self.plan.debug_joint)
-        for call in checks[2:]:
+        for call in checks[1:]:
             self.assertEqual(call[3], arm.check_solution)
         # Probing never moved the arm: the probed poses are exactly the
         # executed ones and every check precedes the insert chain.
         pre_insert_call = self._pose_moves(arm)[-1]
         insert_call, push_call, retract_call = self._move_l_calls(arm)[-3:]
         self.assertEqual(checks[0][2], pre_insert_call[1])
-        self.assertEqual(checks[1][2], pre_insert_call[1])
-        self.assertEqual(checks[2][2], insert_call[1])
-        self.assertEqual(checks[3][2], push_call[1])
-        self.assertEqual(checks[4][2], retract_call[1])
+        self.assertEqual(checks[1][2], insert_call[1])
+        self.assertEqual(checks[2][2], push_call[1])
+        self.assertEqual(checks[3][2], retract_call[1])
         self.assertLess(arm.calls.index(checks[-1]), arm.calls.index(pre_insert_call))
         self.assertEqual(
             task.result.payload["reachability_checked_poses"],
@@ -624,17 +669,20 @@ class ReturnBookReachabilityTests(unittest.TestCase):
         self.assertEqual(task.result.stages[-1].name, "reachability_check")
         self.assertIn("arm pose unreachable (push)", task.result.error)
         self.assertIn("IK did not converge", task.result.error)
-        # The x search passed (fake arm reaches every candidate); the
-        # preflight then failed at push and the insert chain never started.
         self.assertEqual(
             [call[1] for call in self._checks(arm)],
-            ["pre_insert_x_search", "pre_insert", "insert", "push"],
+            ["pre_insert", "insert", "push"],
         )
         # Only the stand-pickup motions ran; the insert chain never started.
         self.assertEqual(self._pose_moves(arm), [("move_to_pose_by_move_j", self.pre_grasp, 4.0)])
+        adjusted = self.grasp.offset_cm((0.0, 0.0, -self.plan.pickup_light_close_down_cm))
         self.assertEqual(
             self._move_l_calls(arm),
-            [("move_l", self.grasp, 2.0), ("move_l", self.pre_grasp, 2.5)],
+            [
+                ("move_l", self.grasp, 2.0),
+                ("move_l", adjusted, 2.0),
+                ("move_l", self.pre_grasp, 2.5),
+            ],
         )
         self.assertEqual(arm.calls[-1][0], "check_pose_reachable")
 

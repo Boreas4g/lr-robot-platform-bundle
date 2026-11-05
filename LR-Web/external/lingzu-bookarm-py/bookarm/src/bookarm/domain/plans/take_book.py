@@ -15,7 +15,7 @@ class GripperCommand:
     close_deg: float = 108.5
     open_speed_deg_s: float = 16.7
     close_speed_deg_s: float = 16.7
-    effort: float = 0.50
+    effort: float = 0.85
     kp: float = 40.0
     kd: float = 3.0
     timeout_s: float = 10.0
@@ -33,17 +33,17 @@ class GripperCommand:
     start_effort: float = 0.60
     start_boost_s: float = 0.4
     # After object contact, keep a small closing lead with repeated commands.
-    contact_hold_offset_deg: float = 2.0
+    contact_hold_offset_deg: float = 8.0
     contact_hold_duration_s: float = 1.0
     contact_hold_rate_hz: float = 20.0
     # Two-stage grip ("grip-and-relax"): once contact has settled (object
     # contact or target reached), the control loop keeps re-sending a carry
     # frame with this reduced holding torque and lead, instead of the full
     # effort used while closing. Keeps the book without overheating motor 7.
-    carry_effort: float = 0.20
-    carry_lead_deg: float = 1.0
+    carry_effort: float = 0.60
+    carry_lead_deg: float = 8.0
     adaptive_carry: bool = False
-    adaptive_carry_max_effort: float = 0.50
+    adaptive_carry_max_effort: float = 0.60
     adaptive_carry_slip_deg: float = 1.0
     adaptive_carry_max_recovery_deg: float = 4.0
 

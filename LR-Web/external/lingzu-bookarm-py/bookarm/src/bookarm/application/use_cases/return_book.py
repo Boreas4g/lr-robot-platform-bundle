@@ -25,18 +25,16 @@ from bookarm.ports.devices import ArmPort, LiftPort, ReservationPort, RodPort, V
 
 
 class ReturnBookUseCase:
-    """Seven-stage return workflow mirroring the return tuning session.
+    """Return workflow mirroring the return tuning session.
 
-    Stages: lift to the shelf height, park the arm at the debug pose,
-    re-locate the reference book by its spine template (synchronous — the arm
+    Stages: lift to the shelf height, park the arm at the debug pose, home the
+    rod, re-locate the reference book by its spine template (synchronous — the arm
     sits idle at debug, so the camera match never competes with arm motion
     for CPU), pick the book to be returned from the calibrated book-stand
-    pickup slot, compute the insert target (Y1 = target grasp y +
-    plan.target_y_offset_cm, z clamped up to plan.min_insert_z_m) plus the
-    IK-searched pre-insert x and the four insert-chain poses, fail fast on
-    unreachable insert poses, then run the insert chain shared with the
-    mid-return flow (pre-insert, insert, push in, partial release, retract,
-    debug).
+    pickup slot, build the insert chain from the recognized target XY plus
+    per-step XY offsets and absolute base-frame Z values, fail fast on
+    unreachable poses, then run the insert chain shared with the mid-return
+    flow (pre-insert, insert, push in, partial release, retract, debug).
     """
 
     def __init__(
@@ -85,6 +83,7 @@ class ReturnBookUseCase:
             steps = (
                 ("lift_move", lambda: self._move_lift(request), False),
                 ("arm_debug_pose", self._prepare_arm, True),
+                ("rod_home", self._home_rod, False),
                 (
                     "vision_retarget",
                     lambda: retarget_insert_book(
@@ -144,6 +143,16 @@ class ReturnBookUseCase:
                 return steps[: index + 1]
         raise ValueError("unsupported return-book stop stage: %s" % stop_after_stage)
 
+    def _home_rod(self) -> Dict[str, Any]:
+        self.rod.move_to_deg(
+            self.plan.rod_home_deg,
+            self.plan.rod_speed,
+            self.plan.rod_acceleration,
+            self.plan.rod_tolerance_deg,
+            self.plan.rod_timeout_s,
+        )
+        return {"rod_deg": self.plan.rod_home_deg}
+
     def _move_lift(self, request: ReturnBookRequest) -> Dict[str, Any]:
         result = self.lift.move_to_height_mm(
             request.target_height_mm,
@@ -171,6 +180,7 @@ class ReturnBookUseCase:
             self.plan,
             engine=self.engine,
             task=task,
+            vehicle_alignment_enabled=request.enable_vehicle_alignment,
         )
 
     def _prepare_arm(self) -> Dict[str, Any]:
@@ -179,10 +189,8 @@ class ReturnBookUseCase:
         return prepare_arm_at_debug(self.arm, self.plan)
 
     def _compute_insert_target_and_poses(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Compute the insert target from the fresh recognition, then the
-        pre-insert x IK search and all four insert-chain poses; the
-        reachability check and the insert itself reuse them (no second
-        search). A failed search fails here, while the arm holds the book."""
+        """Build all four poses from recognized target XY, per-step XY
+        offsets and absolute Z; the reachability check and insert reuse them."""
 
         details = compute_insert_target(self.plan, context)
         poses = insert_chain_poses(self.plan, context["insert_target"], self.arm)

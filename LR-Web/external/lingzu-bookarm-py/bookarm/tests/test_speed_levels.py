@@ -74,8 +74,8 @@ class ApplySpeedLevelTests(unittest.TestCase):
         self.assertEqual(gripper.start_boost_s, 0.4)
         self.assertEqual(gripper.monitor_period_s, 0.05)
         self.assertEqual(gripper.timeout_s, 10.0)
-        self.assertEqual(gripper.effort, 0.5)
-        self.assertEqual(gripper.carry_effort, 0.2)
+        self.assertEqual(gripper.effort, 0.85)
+        self.assertEqual(gripper.carry_effort, 0.6)
         self.assertEqual(gripper.stall_lead_threshold_deg, 10.0)
         self.assertEqual(gripper.stall_tolerance_deg, 0.4)
         self.assertEqual(gripper.close_deg, 108.5)
@@ -130,15 +130,12 @@ class ApplySpeedLevelTests(unittest.TestCase):
             "forward_duration_s",
             "push_duration_s",
             "retract_duration_s",
-            "rotate_duration_s",
-            "press_duration_s",
-            "press_retract_duration_s",
         ):
             self.assertEqual(getattr(plan, name), 1.2, name)
         self.assertEqual(plan.rod_speed, 1800)
         # Insert geometry is not speed-coupled.
-        self.assertEqual(plan.target_y_offset_cm, 4.0)
-        self.assertEqual(plan.pre_insert_x_max_m, -0.33)
+        self.assertEqual(plan.insert_xy_offset_m, (0.0, 0.04))
+        self.assertEqual(plan.insert_z_m, 0.04)
 
     def test_fast_scales_return_book(self):
         plan = apply_speed_level(replace(ReturnBookMotionPlan(), speed_level="fast"))
@@ -150,10 +147,10 @@ class ApplySpeedLevelTests(unittest.TestCase):
         self.assertEqual(plan.push_duration_s, 1.2)
         self.assertEqual(plan.retract_duration_s, 1.2)
         self.assertEqual(plan.gripper.close_speed_deg_s, 60.12)
-        # The rod-less plan has no rod word; insert geometry never scales.
-        self.assertFalse(hasattr(plan, "rod_speed"))
-        self.assertEqual(plan.target_y_offset_cm, 4.0)
-        self.assertEqual(plan.pre_insert_x_max_m, -0.20)
+        self.assertEqual(plan.rod_speed, 1800)
+        # Insert geometry never scales.
+        self.assertEqual(plan.insert_xy_offset_m, (0.0, 0.04))
+        self.assertEqual(plan.insert_z_m, 0.04)
 
     def test_scaling_respects_tuned_base_values(self):
         base = replace(

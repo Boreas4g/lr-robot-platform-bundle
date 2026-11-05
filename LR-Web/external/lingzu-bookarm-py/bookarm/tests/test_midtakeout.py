@@ -21,7 +21,7 @@ from bookarm.application.use_cases.mid_takeout import MidTakeoutUseCase
 from test_workflows import FakeArm, FakeReservation, _request, _sdk, _slots
 
 
-def test_mid_takeout_full_close_skips_full_open_then_post_grasp_and_debug():
+def test_mid_takeout_recloses_after_rod_home_then_post_grasp_and_debug():
     plan = MidTakeoutMotionPlan()
     sdk, arm, _reservation = _sdk(arm=FakeArm(enabled=True))
     sdk._mid_takeout = MidTakeoutUseCase(
@@ -67,12 +67,16 @@ def test_mid_takeout_tuning_steps_reuse_the_requested_boundaries():
         mid_names = [step.name for step in tuning.mid_return.session._steps(plan)]
         take_names = [step.name for step in tuning.take.session._steps(plan)]
 
-        assert names[:10] == mid_names[:10]
-        assert names[10] == "机械臂上移"
+        assert len(names) == 21
+        assert names[:9] == mid_names[:9]
+        assert names[9] == "机械臂上移"
+        assert names[10] == mid_names[9]
         assert names[11] == mid_names[10]
-        assert names[12] == mid_names[11]
-        assert names[13] == "完全闭合夹爪"
-        assert names[14:] == take_names[8:]
+        assert names[10] == "推杆归位"
+        assert names[11] == "再次推回(re_push_x)"
+        assert names[12:] == take_names[7:]
+        assert names[12] == "闭合夹爪"
+        assert names[13] == "抓取后撤"
         assert "midtakeout_place" in tuning.book_stand.view()
         runner.shutdown()
 
@@ -99,7 +103,7 @@ def test_mid_takeout_profile_is_independent_and_speed_scales_post_grasp():
         assert plan.return_debug_duration_s == 1.8
         assert plan.gripper.kp == 40.0
         assert plan.gripper.kd == 3.0
-        assert plan.gripper.carry_effort == 0.2
+        assert plan.gripper.carry_effort == 0.6
         assert apply_speed_level(MidTakeoutMotionPlan()).post_grasp_duration_s == 2.0
 
 
@@ -118,7 +122,7 @@ def test_packaged_mid_takeout_slots_contain_only_calibrated_poses():
         assert plan.lower_place.z_m > 0.0
 
 
-def test_mid_takeout_lower_profile_supports_six_offsets_and_legacy_z():
+def test_mid_takeout_lower_profile_remains_loadable_for_legacy_configs():
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "midtakeout.json"
         path.write_text(
@@ -137,20 +141,39 @@ def test_mid_takeout_lower_profile_supports_six_offsets_and_legacy_z():
         assert plan.lower_rpy_offset_deg == (4.0, 5.0, 6.0)
 
 
-def test_mid_takeout_lower_motion_applies_six_offsets():
+def test_mid_takeout_raises_then_homes_rod_and_re_pushes_from_current_pose():
     sdk, arm, _reservation = _sdk(arm=FakeArm(enabled=True))
     plan = replace(
         MidTakeoutMotionPlan(),
         lower_offset_cm=(1.0, 2.0, -3.0),
         lower_rpy_offset_deg=(4.0, 5.0, 6.0),
     )
+    rod = sdk._take_book.rod
+    events = []
+    original_rod_move = rod.move_to_deg
+    original_tcp_pose = arm.tcp_pose
+    tcp_poses = []
+
+    def record_rod_move(target_deg, *args):
+        events.append(("rod", float(target_deg)))
+        return original_rod_move(target_deg, *args)
+
+    def record_tcp_pose(joints):
+        pose = original_tcp_pose(joints)
+        pose = pose.offset_cm((0.0, 2.0 if tcp_poses else 1.0, 0.0))
+        tcp_poses.append(pose)
+        return pose
+
+    rod.move_to_deg = record_rod_move
+    arm.tcp_pose = record_tcp_pose
+    arm.move_l_hook = lambda: events.append(("move_l", arm.calls[-1][1]))
     sdk._mid_takeout = MidTakeoutUseCase(
         task_manager=sdk._task_manager,
         reservation=FakeReservation(),
         lift=sdk._take_book.lift,
         vision=sdk._take_book.vision,
         arm=arm,
-        rod=sdk._take_book.rod,
+        rod=rod,
         slots=_slots(),
         plan=plan,
     )
@@ -163,19 +186,37 @@ def test_mid_takeout_lower_motion_applies_six_offsets():
 
     assert task.state is TaskState.SUCCEEDED
     target = sdk._take_book.vision.locate_book(request.spine_template)
+    approach = target.grasp_pose.offset_cm(
+        plan.approach_offset_cm, rpy_deg=plan.grasp_rpy_deg
+    )
     fine = target.grasp_pose.offset_cm(
         plan.fine_grasp_offset_cm, rpy_deg=plan.fine_grasp_rpy_deg
     )
     push_in = fine.offset_cm((plan.push_in_x_offset_cm, 0.0, 0.0))
-    re_push = push_in.offset_cm((plan.re_push_x_offset_cm, 0.0, 0.0))
-    raised = re_push.offset_cm((0.0, 0.0, plan.raise_z_offset_cm))
-    expected = raised.offset_cm(
-        plan.lower_offset_cm, rpy_offset_deg=plan.lower_rpy_offset_deg
-    )
-    assert task.result.payload["raise_base_pose"] == raised.values()
-    assert task.result.payload["lower_base_pose"] == expected.values()
-    assert [call[1] for call in arm.calls if call[0] == "move_l"][-3:] == [
-        re_push,
-        raised,
-        expected,
+    raised = tcp_poses[0].offset_cm((0.0, 0.0, plan.raise_z_offset_cm))
+    re_push = tcp_poses[1].offset_cm((plan.re_push_x_offset_cm, 0.0, 0.0))
+    assert tcp_poses == [
+        push_in.offset_cm((0.0, 1.0, 0.0)),
+        raised.offset_cm((0.0, 2.0, 0.0)),
     ]
+    assert task.result.payload["push_in_base_pose"] == push_in.values()
+    assert task.result.payload["re_push_base_pose"] == re_push.values()
+    assert task.result.payload["raise_base_pose"] == raised.values()
+    assert "lower_base_pose" not in task.result.payload
+    assert [call[1] for call in arm.calls if call[0] == "move_l"] == [
+        approach,
+        push_in,
+        raised,
+        re_push,
+    ]
+    assert rod.calls == [
+        plan.rod_home_deg,
+        plan.rod_grasp_deg,
+        plan.rod_putback_deg,
+    ]
+    assert events[-3:] == [
+        ("move_l", raised),
+        ("rod", plan.rod_putback_deg),
+        ("move_l", re_push),
+    ]
+    assert arm.calls[-3] == "close_gripper"

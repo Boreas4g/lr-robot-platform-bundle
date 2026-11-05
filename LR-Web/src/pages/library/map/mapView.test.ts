@@ -10,6 +10,7 @@ import {
   type MapViewTransform,
   MIN_MAP_SCALE,
   mapCoordsFromPixel,
+  mapCoordsWithinMap,
   mapLayerTransform,
   mapPixelFromClientPoint,
   mapPixelFromMapCoords,
@@ -197,6 +198,28 @@ describe('mapPixelFromMapCoords', () => {
       x: 0,
       y: 0,
     });
+  });
+});
+
+describe('mapCoordsWithinMap', () => {
+  const map = {
+    width: 100,
+    height: 50,
+    resolution: 0.05,
+    origin: { x: -1, y: -2, yaw: 0 },
+  };
+
+  it('accepts coordinates on and inside the map boundaries', () => {
+    expect(mapCoordsWithinMap(map, { x: -1, y: -2 })).toBe(true);
+    expect(mapCoordsWithinMap(map, { x: 0, y: 0 })).toBe(true);
+    expect(mapCoordsWithinMap(map, { x: 3.94, y: 0.44 })).toBe(true);
+  });
+
+  it('rejects coordinates outside the map instead of clamping them', () => {
+    expect(mapCoordsWithinMap(map, { x: -1.06, y: 0 })).toBe(false);
+    expect(mapCoordsWithinMap(map, { x: 4, y: 0 })).toBe(false);
+    expect(mapCoordsWithinMap(map, { x: 0, y: -2.06 })).toBe(false);
+    expect(mapCoordsWithinMap(map, { x: 0, y: 0.5 })).toBe(false);
   });
 });
 

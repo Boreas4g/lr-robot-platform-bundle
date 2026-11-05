@@ -99,6 +99,51 @@ beforeEach(() => {
       createdAt: '',
       updatedAt: '',
     },
+    {
+      id: 'BOOK-4',
+      name: '取还书2',
+      templateId: 'TPL-4',
+      heightMm: 600,
+      annotationId: 'ANN-SHELF-2',
+      createdAt: '',
+      updatedAt: '',
+    },
+    {
+      id: 'BOOK-5',
+      name: '取还书3',
+      templateId: 'TPL-5',
+      heightMm: 650,
+      annotationId: 'ANN-SHELF-1',
+      createdAt: '',
+      updatedAt: '',
+    },
+    {
+      id: 'BOOK-6',
+      name: '定位书3',
+      templateId: 'TPL-6',
+      heightMm: 670,
+      annotationId: 'ANN-SHELF-1',
+      createdAt: '',
+      updatedAt: '',
+    },
+    {
+      id: 'BOOK-7',
+      name: '取还书4',
+      templateId: 'TPL-7',
+      heightMm: 660,
+      annotationId: 'ANN-SHELF-2',
+      createdAt: '',
+      updatedAt: '',
+    },
+    {
+      id: 'BOOK-8',
+      name: '定位书4',
+      templateId: 'TPL-8',
+      heightMm: 680,
+      annotationId: 'ANN-SHELF-2',
+      createdAt: '',
+      updatedAt: '',
+    },
   ] satisfies Book[]);
   mocks.getRobots.mockResolvedValue([
     { id: 'LR-01', name: '机器人 1' } as RobotSummary,
@@ -199,7 +244,7 @@ describe('快速取还书演示参数', () => {
     );
   });
 
-  it('架内取还书提交同一本目标书、两本定位书和两个书架点位', async () => {
+  it('架内取还书提交两本目标书、两本定位书和两个书架点位', async () => {
     mocks.getRobots.mockResolvedValue([
       { id: 'LR-01', name: '机器人 1', mapId: 'MAP-1' } as RobotSummary,
     ]);
@@ -214,20 +259,33 @@ describe('快速取还书演示参数', () => {
     const selects = screen.getAllByRole('combobox');
     fireEvent.mouseDown(selects[1]);
     fireEvent.click(await screen.findByText('取还书'));
-    fireEvent.mouseDown(selects[2]);
+    fireEvent.mouseDown(selects[4]);
+    const takeBook2Options = await screen.findAllByText('取还书2');
+    fireEvent.click(takeBook2Options.at(-1) as HTMLElement);
+    fireEvent.mouseDown(selects[7]);
     const reference1Options = await screen.findAllByText('定位书');
     fireEvent.click(reference1Options.at(-1) as HTMLElement);
-    fireEvent.mouseDown(selects[3]);
+    fireEvent.mouseDown(selects[8]);
     const reference2Options = await screen.findAllByText('定位书2');
     fireEvent.click(reference2Options.at(-1) as HTMLElement);
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: '书1取书模式' }));
+    fireEvent.click(
+      (await screen.findAllByText('中位取书')).at(-1) as HTMLElement,
+    );
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: '书1还书模式' }));
+    fireEvent.click(
+      (await screen.findAllByText('末尾还书')).at(-1) as HTMLElement,
+    );
     fireEvent.click(screen.getByRole('switch', { name: '车辆居中对齐服务' }));
 
     const heightInputs = screen.getAllByRole('spinbutton');
-    expect(heightInputs).toHaveLength(3);
+    expect(heightInputs).toHaveLength(5);
     expect(screen.queryByText('固定升降杆高度　')).not.toBeInTheDocument();
-    fireEvent.change(heightInputs[0], { target: { value: '650' } });
-    fireEvent.change(heightInputs[1], { target: { value: '950' } });
-    fireEvent.change(heightInputs[2], { target: { value: '0.08' } });
+    fireEvent.change(heightInputs[0], { target: { value: '610' } });
+    fireEvent.change(heightInputs[1], { target: { value: '620' } });
+    fireEvent.change(heightInputs[2], { target: { value: '630' } });
+    fireEvent.change(heightInputs[3], { target: { value: '640' } });
+    fireEvent.change(heightInputs[4], { target: { value: '0.08' } });
 
     const startButton = screen.getByRole('button', {
       name: '开始架内取还书',
@@ -241,16 +299,23 @@ describe('快速取还书演示参数', () => {
     expect(mocks.createShelfInternal).toHaveBeenCalledWith({
       robotId: 'LR-01',
       bookId: 'BOOK-1',
+      book2Id: 'BOOK-4',
       referenceBook1Id: 'BOOK-2',
       referenceBook2Id: 'BOOK-3',
       shelf1Target: { x: 0, y: 0, yaw: 0 },
       shelf2Target: { x: 1.5, y: 0, yaw: 0 },
-      shelf1LiftHeightMm: 650,
-      shelf2LiftHeightMm: 950,
+      book1LiftHeightMm: 610,
+      book2LiftHeightMm: 620,
+      referenceBook1LiftHeightMm: 630,
+      referenceBook2LiftHeightMm: 640,
       moveSpeedMps: 0.08,
       enableVehicleAlignment: false,
+      navigationOnly: false,
       bookStandSlot: 1,
-      takeoutMode: 'standard',
+      book1TakeoutMode: 'mid',
+      book2TakeoutMode: 'standard',
+      book1ReturnMode: 'end',
+      book2ReturnMode: 'mid',
       liftSpeedLevel: 2,
       mapId: 'MAP-1',
       shelf1AnnotationId: 'ANN-SHELF-1',
@@ -259,6 +324,137 @@ describe('快速取还书演示参数', () => {
     expect(mocks.createCompleteTakeout).not.toHaveBeenCalled();
     expect(mocks.createCompleteReturn).not.toHaveBeenCalled();
     await waitFor(() => expect(mocks.disableArm).toHaveBeenCalledTimes(1));
+  });
+
+  it('循环模式提交追加的第三第四轮配置', async () => {
+    mocks.getRobots.mockResolvedValue([
+      { id: 'LR-01', name: '机器人 1', mapId: 'MAP-1' } as RobotSummary,
+    ]);
+    window.localStorage.setItem(
+      'lr-web-quick-demo-options',
+      JSON.stringify({
+        demoMode: 'shelf_internal',
+        robotId: 'LR-01',
+        takeBookId: 'BOOK-1',
+        takeBook2Id: 'BOOK-4',
+        takeBook3Id: 'BOOK-5',
+        takeBook4Id: 'BOOK-7',
+        referenceBookId: 'BOOK-2',
+        referenceBook2Id: 'BOOK-3',
+        referenceBook3Id: 'BOOK-6',
+        referenceBook4Id: 'BOOK-8',
+        shelf1AnnotationId: 'ANN-SHELF-1',
+        shelf2AnnotationId: 'ANN-SHELF-2',
+        loopMode: true,
+        book1LiftHeightMm: 610,
+        book2LiftHeightMm: 620,
+        book3LiftHeightMm: 650,
+        book4LiftHeightMm: 660,
+        referenceBook1LiftHeightMm: 630,
+        referenceBook2LiftHeightMm: 640,
+        referenceBook3LiftHeightMm: 670,
+        referenceBook4LiftHeightMm: 680,
+        book3TakeoutMode: 'mid',
+        book4TakeoutMode: 'standard',
+        book3ReturnMode: 'end',
+        book4ReturnMode: 'mid',
+      }),
+    );
+    render(
+      <App>
+        <QuickTakeReturnDemoPage />
+      </App>,
+    );
+
+    await screen.findByText('机器人 1（LR-01）');
+    expect(screen.getByRole('switch', { name: '循环模式' })).toBeChecked();
+    expect(screen.getByText(/目标书3/)).toBeInTheDocument();
+    expect(screen.getByText(/目标书4/)).toBeInTheDocument();
+    const startButton = screen.getByRole('button', {
+      name: '开始架内取还书',
+    });
+    await waitFor(() => expect(startButton).toBeEnabled());
+    fireEvent.click(startButton);
+
+    await waitFor(() =>
+      expect(mocks.createShelfInternal).toHaveBeenCalledTimes(1),
+    );
+    expect(mocks.createShelfInternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enableLoopMode: true,
+        book3Id: 'BOOK-5',
+        book4Id: 'BOOK-7',
+        referenceBook3Id: 'BOOK-6',
+        referenceBook4Id: 'BOOK-8',
+        book3LiftHeightMm: 650,
+        book4LiftHeightMm: 660,
+        referenceBook3LiftHeightMm: 670,
+        referenceBook4LiftHeightMm: 680,
+        book3TakeoutMode: 'mid',
+        book4TakeoutMode: 'standard',
+        book3ReturnMode: 'end',
+        book4ReturnMode: 'mid',
+      }),
+    );
+  });
+
+  it('仅测导航只提交两个点位且不执行机械臂失能', async () => {
+    mocks.getRobots.mockResolvedValue([
+      { id: 'LR-01', name: '机器人 1', mapId: 'MAP-1' } as RobotSummary,
+    ]);
+    render(
+      <App>
+        <QuickTakeReturnDemoPage />
+      </App>,
+    );
+
+    await screen.findByText('机器人 1（LR-01）');
+    fireEvent.click(screen.getByRole('radio', { name: '架内取还书' }));
+    fireEvent.click(screen.getByRole('switch', { name: '仅测导航' }));
+    expect(
+      screen.queryByText('目标书1（第一轮从书架1取出）'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('switch', { name: '车辆居中对齐服务' }),
+    ).not.toBeInTheDocument();
+
+    const targetSelects = screen.getAllByRole('combobox');
+    fireEvent.mouseDown(targetSelects[1]);
+    fireEvent.click(await screen.findByText('测试书架1（书架）'));
+    fireEvent.mouseDown(targetSelects[3]);
+    fireEvent.click(
+      (await screen.findAllByText('测试书架2（书架）')).at(-1) as HTMLElement,
+    );
+    const startButton = screen.getByRole('button', { name: '开始仅测导航' });
+    await waitFor(() => expect(startButton).toBeEnabled());
+    fireEvent.click(startButton);
+
+    await waitFor(() =>
+      expect(mocks.createShelfInternal).toHaveBeenCalledTimes(1),
+    );
+    const request = mocks.createShelfInternal.mock.calls[0][0];
+    expect(request).toEqual(
+      expect.objectContaining({
+        robotId: 'LR-01',
+        navigationOnly: true,
+        shelf1Target: { x: 0, y: 0, yaw: 0 },
+        shelf2Target: { x: 1.5, y: 0, yaw: 0 },
+        shelf1AnnotationId: 'ANN-SHELF-1',
+        shelf2AnnotationId: 'ANN-SHELF-2',
+      }),
+    );
+    expect(request.bookId).toBeUndefined();
+    expect(request.book2Id).toBeUndefined();
+    expect(request.referenceBook1Id).toBeUndefined();
+    expect(request.referenceBook2Id).toBeUndefined();
+    expect(mocks.createCompleteTakeout).not.toHaveBeenCalled();
+    expect(mocks.createCompleteReturn).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: '开始仅测导航' }),
+      ).toBeEnabled(),
+    );
+    expect(mocks.disableArm).not.toHaveBeenCalled();
   });
 
   it('保存当前配置并在重新打开页面时恢复', async () => {
@@ -276,18 +472,30 @@ describe('快速取还书演示参数', () => {
     const selects = screen.getAllByRole('combobox');
     fireEvent.mouseDown(selects[1]);
     fireEvent.click(await screen.findByText('取还书'));
-    fireEvent.mouseDown(selects[2]);
+    fireEvent.mouseDown(selects[4]);
+    const takeBook2Options = await screen.findAllByText('取还书2');
+    fireEvent.click(takeBook2Options.at(-1) as HTMLElement);
+    fireEvent.mouseDown(selects[7]);
     const reference1Options = await screen.findAllByText('定位书');
     fireEvent.click(reference1Options.at(-1) as HTMLElement);
-    fireEvent.mouseDown(selects[3]);
+    fireEvent.mouseDown(selects[8]);
     const reference2Options = await screen.findAllByText('定位书2');
     fireEvent.click(reference2Options.at(-1) as HTMLElement);
-    fireEvent.click(screen.getByRole('radio', { name: '中位取书' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: '书1取书模式' }));
+    fireEvent.click(
+      (await screen.findAllByText('中位取书')).at(-1) as HTMLElement,
+    );
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: '书1还书模式' }));
+    fireEvent.click(
+      (await screen.findAllByText('末尾还书')).at(-1) as HTMLElement,
+    );
     fireEvent.click(screen.getByRole('switch', { name: '车辆居中对齐服务' }));
     const heightInputs = screen.getAllByRole('spinbutton');
-    fireEvent.change(heightInputs[0], { target: { value: '650' } });
-    fireEvent.change(heightInputs[1], { target: { value: '950' } });
-    fireEvent.change(heightInputs[2], { target: { value: '0.08' } });
+    fireEvent.change(heightInputs[0], { target: { value: '610' } });
+    fireEvent.change(heightInputs[1], { target: { value: '620' } });
+    fireEvent.change(heightInputs[2], { target: { value: '630' } });
+    fireEvent.change(heightInputs[3], { target: { value: '640' } });
+    fireEvent.change(heightInputs[4], { target: { value: '0.08' } });
     fireEvent.click(screen.getByRole('button', { name: /保存配置/ }));
 
     await waitFor(() =>
@@ -296,13 +504,20 @@ describe('快速取还书演示参数', () => {
           demoMode: 'shelf_internal',
           robotId: 'LR-01',
           takeBookId: 'BOOK-1',
+          takeBook2Id: 'BOOK-4',
           referenceBookId: 'BOOK-2',
           referenceBook2Id: 'BOOK-3',
           shelf1AnnotationId: 'ANN-SHELF-1',
           shelf2AnnotationId: 'ANN-SHELF-2',
-          takeoutMode: 'mid',
-          shelf1LiftHeightMm: 650,
-          shelf2LiftHeightMm: 950,
+          takeoutMode: 'standard',
+          book1TakeoutMode: 'mid',
+          book2TakeoutMode: 'standard',
+          book1ReturnMode: 'end',
+          book2ReturnMode: 'mid',
+          book1LiftHeightMm: 610,
+          book2LiftHeightMm: 620,
+          referenceBook1LiftHeightMm: 630,
+          referenceBook2LiftHeightMm: 640,
           moveSpeedMps: 0.08,
           enableVehicleAlignment: false,
         }),
@@ -319,14 +534,17 @@ describe('快速取还书演示参数', () => {
     await waitFor(() =>
       expect(screen.getByRole('radio', { name: '架内取还书' })).toBeChecked(),
     );
-    expect(screen.getByRole('radio', { name: '中位取书' })).toBeChecked();
+    expect(screen.getByTitle('中位取书')).toBeInTheDocument();
+    expect(screen.getByTitle('末尾还书')).toBeInTheDocument();
     expect(
       screen.getByRole('switch', { name: '车辆居中对齐服务' }),
     ).not.toBeChecked();
     const restoredHeights = screen.getAllByRole('spinbutton');
-    expect(restoredHeights[0]).toHaveValue('650');
-    expect(restoredHeights[1]).toHaveValue('950');
-    expect(restoredHeights[2]).toHaveValue('0.08');
+    expect(restoredHeights[0]).toHaveValue('610');
+    expect(restoredHeights[1]).toHaveValue('620');
+    expect(restoredHeights[2]).toHaveValue('630');
+    expect(restoredHeights[3]).toHaveValue('640');
+    expect(restoredHeights[4]).toHaveValue('0.08');
     await waitFor(() =>
       expect(
         screen.getByRole('button', { name: '开始架内取还书' }),

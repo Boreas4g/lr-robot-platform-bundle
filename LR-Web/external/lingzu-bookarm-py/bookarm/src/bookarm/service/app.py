@@ -253,6 +253,7 @@ def create_app(
         template_id: Annotated[Optional[str], Form()] = None,
         source_slot: Annotated[int, Form(ge=1, le=5)] = 1,
         lift_speed_level: Annotated[int, Form(ge=1, le=3)] = 1,
+        enable_vehicle_alignment: Annotated[bool, Form()] = True,
         stop_after_stage: Annotated[str, Form()] = ReturnBookStage.SHELF_INSERT.value,
         book_id: Annotated[Optional[str], Form()] = None,
     ) -> WorkflowTaskView:
@@ -277,6 +278,7 @@ def create_app(
             left_neighbor_spine_template=SpineTemplate(template_path),
             source_slot=BookStandSlot(source_slot),
             lift_speed_level=lift_speed_level,
+            enable_vehicle_alignment=enable_vehicle_alignment,
             stop_after_stage=stop_after,
         )
         try:

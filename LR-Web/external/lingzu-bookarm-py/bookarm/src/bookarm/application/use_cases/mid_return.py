@@ -24,9 +24,8 @@ from bookarm.domain.policies.safety import ensure_joint_target
 from bookarm.ports.devices import ArmPort, LiftPort, ReservationPort, RodPort, VisionPort
 
 
-# The return-book flow runs this same insert pipeline (its plan exposes the
-# same attribute names), so the shared stages are module-level helpers
-# parameterized by plan.
+# The return-book flow runs this same insert pipeline with target-relative
+# positions, so the shared stages are module-level helpers parameterized by plan.
 InsertChainPlan = Union[MidReturnMotionPlan, ReturnBookMotionPlan]
 
 
@@ -94,6 +93,37 @@ def stand_pickup_gripper_command(plan: InsertChainPlan) -> GripperCommand:
     )
 
 
+def light_close_at_book_stand(arm: ArmPort, plan: InsertChainPlan) -> Dict[str, Any]:
+    command = replace(
+        plan.gripper,
+        close_deg=plan.pickup_light_close_deg,
+        adaptive_carry=False,
+    )
+    return {
+        "gripper_close": arm.close_gripper_monitored(command),
+        "light_close_deg": command.close_deg,
+    }
+
+
+def adjust_book_stand_grasp_depth(
+    arm: ArmPort, pickup: BookStandPickupPlan, plan: InsertChainPlan
+) -> Dict[str, Any]:
+    current = arm.tcp_pose(arm.read_joint_pose())
+    down_cm = float(plan.pickup_light_close_down_cm)
+    rpy_offset = tuple(plan.pickup_light_close_rpy_offset_deg)
+    adjusted = current.offset_cm(
+        (0.0, 0.0, -down_cm), rpy_offset_deg=rpy_offset
+    )
+    if down_cm != 0.0 or any(rpy_offset):
+        arm.move_l(adjusted, pickup.grasp_duration_s)
+    return {
+        "base_pose": list(adjusted.values()),
+        "current_base_pose": list(current.values()),
+        "down_cm": down_cm,
+        "rpy_offset_deg": list(rpy_offset),
+    }
+
+
 def pickup_book_from_stand(
     arm: ArmPort,
     engine: WorkflowEngine,
@@ -104,7 +134,7 @@ def pickup_book_from_stand(
     *,
     adaptive_hold: bool = False,
 ) -> Dict[str, Any]:
-    """Close at the stand; mid-return stays for direct insert, return retreats."""
+    """Light-close, adjust depth from the measured TCP, then close at the stand."""
 
     open_command = replace(plan.gripper, open_deg=plan.pickup_open_deg)
     arm.open_gripper(plan.pickup_open_deg, open_command)
@@ -113,20 +143,10 @@ def pickup_book_from_stand(
     engine.raise_if_cancelled(task)
     arm.move_l(pickup.grasp, pickup.grasp_duration_s)
     engine.raise_if_cancelled(task)
-    lowered = pickup.grasp
-    if adaptive_hold:
-        light_close_command = replace(
-            plan.gripper,
-            close_deg=plan.pickup_light_close_deg,
-            adaptive_carry=False,
-        )
-        arm.close_gripper_monitored(light_close_command)
-        engine.raise_if_cancelled(task)
-        down_cm = float(plan.pickup_light_close_down_cm)
-        if down_cm != 0.0:
-            lowered = pickup.grasp.offset_cm((0.0, 0.0, -down_cm))
-            arm.move_l(lowered, pickup.grasp_duration_s)
-            engine.raise_if_cancelled(task)
+    light_close = light_close_at_book_stand(arm, plan)
+    engine.raise_if_cancelled(task)
+    depth_adjustment = adjust_book_stand_grasp_depth(arm, pickup, plan)
+    engine.raise_if_cancelled(task)
     # Picking the return book off the stand slot: an empty close means the
     # slot holds no book or the calibrated pose no longer matches.
     close_command = stand_pickup_gripper_command(plan) if adaptive_hold else plan.gripper
@@ -135,10 +155,15 @@ def pickup_book_from_stand(
         scenario="empty slot or misalignment",
     )
     engine.raise_if_cancelled(task)
+    details = {
+        "book_stand_source_slot": source_slot,
+        **light_close,
+        **depth_adjustment,
+        "gripper_grasp_result": grasp_result,
+    }
     if adaptive_hold:
         return {
-            "book_stand_source_slot": source_slot,
-            "gripper_grasp_result": grasp_result,
+            **details,
             "returned_to_debug_pose_after_pickup": False,
             "direct_pre_insert_after_pickup": True,
         }
@@ -148,8 +173,7 @@ def pickup_book_from_stand(
     final_pose = arm.read_joint_pose()
     ensure_joint_target(plan.debug_joint, final_pose, plan.joint_tolerance_rad)
     return {
-        "book_stand_source_slot": source_slot,
-        "gripper_grasp_result": grasp_result,
+        **details,
         "returned_to_debug_pose_after_pickup": True,
         "arm_measured_joint_pose_rad": final_pose.values_rad,
     }
@@ -203,25 +227,22 @@ def _chain_poses_from_context(
 
 
 def compute_insert_target(plan: InsertChainPlan, context: Dict[str, Any]) -> Dict[str, Any]:
-    """Compute Y1 directly from the freshly re-targeted book: no
-    depth gap scan is run; Y1 = target grasp y + plan.target_y_offset_cm."""
-
-    target = _insert_book_target(context)
-    grasp_pose = target.grasp_pose
-    y_offset_cm = float(plan.target_y_offset_cm)
-    y1_m = grasp_pose.y_m + y_offset_cm / 100.0
-    # Low insert targets run the wrist into joint limits at insert_rpy_deg;
-    # clamp z up to the reachable minimum rather than failing IK.
-    z_m = max(grasp_pose.z_m, float(plan.min_insert_z_m))
-    insert_target = BasePose(grasp_pose.x_m, y1_m, z_m, 0.0, 0.0, 0.0)
+    grasp_pose = _insert_book_target(context).grasp_pose
+    insert_target = BasePose(grasp_pose.x_m, grasp_pose.y_m, 0.0, 0.0, 0.0, 0.0)
     context["insert_target"] = insert_target
+    insert_position = BasePose(
+        grasp_pose.x_m + plan.insert_xy_offset_m[0],
+        grasp_pose.y_m + plan.insert_xy_offset_m[1],
+        plan.insert_z_m,
+        0.0,
+        0.0,
+        0.0,
+    )
     return {
         "insert_book_target_grasp_base_pose": list(grasp_pose.values()),
-        "target_y_offset_cm": y_offset_cm,
-        "y1_m": y1_m,
-        "min_insert_z_m": float(plan.min_insert_z_m),
-        "insert_z_clamped": z_m > grasp_pose.z_m,
-        "insert_target_base_pose": list(insert_target.values()),
+        "insert_xy_offset_m": list(plan.insert_xy_offset_m),
+        "insert_z_m": plan.insert_z_m,
+        "insert_target_base_pose": list(insert_position.values()),
     }
 
 
@@ -272,46 +293,36 @@ def insert_chain_poses(
     """Insert-chain arm poses in motion order, shared with the precheck.
 
     The pre-insert staging pose is flown MovePByJ before the final MoveL
-    approach; y/z chain off the insert pose. Plans without a pinned
-    ``pre_insert_x_m`` IK-search the numerically greatest reachable x for
-    each fresh insert target, so the staging pose hugs the outer reach
-    boundary. When the plan carries ``pre_insert_x_max_m``, the search starts
-    at that cap and never returns a shallower x. Plans carrying
-    ``rotate_rpy_deg`` (mid-return) append a rotate → press → press-retract
-    tail after the retract pose.
+    approach. For both return flows, ``insert_target`` carries the recognized
+    target x/y; each step adds its own XY offset and uses its absolute z and
+    attitude. Plans carrying ``rotate_rpy_deg`` (mid-return) append a rotate →
+    press → press-retract tail after the retract pose.
     """
 
-    insert = insert_target.offset_cm(plan.insert_offset_cm, rpy_deg=plan.insert_rpy_deg)
-    pre_insert_y_m = insert.y_m + float(plan.pre_insert_y_offset_cm) / 100.0
-    pre_insert_z_m = insert.z_m + float(plan.pre_insert_z_offset_cm) / 100.0
-    pre_insert_x_m = getattr(plan, "pre_insert_x_m", None)
-    if pre_insert_x_m is None:
-        if arm is None:
-            raise RuntimeError("pre-insert x search requires the arm")
-        template = replace(insert, y_m=pre_insert_y_m, z_m=pre_insert_z_m)
-        pre_insert_x_m = search_pre_insert_x(
-            arm,
-            template,
-            plan.debug_joint,
-            x_max_m=getattr(plan, "pre_insert_x_max_m", None),
-        )
-    pre_insert = replace(
+    insert = BasePose(
+        insert_target.x_m + plan.insert_xy_offset_m[0],
+        insert_target.y_m + plan.insert_xy_offset_m[1],
+        plan.insert_z_m,
+        0.0,
+        0.0,
+        0.0,
+    ).offset_cm((0.0, 0.0, 0.0), rpy_deg=plan.insert_rpy_deg)
+    pre_insert = BasePose(
+        insert_target.x_m + plan.pre_insert_xy_offset_m[0],
+        insert_target.y_m + plan.pre_insert_xy_offset_m[1],
+        plan.pre_insert_z_m,
+        0.0,
+        0.0,
+        0.0,
+    ).offset_cm((0.0, 0.0, 0.0), rpy_deg=plan.pre_insert_rpy_deg)
+    push = replace(
         insert,
-        x_m=float(pre_insert_x_m),
-        y_m=pre_insert_y_m,
-        z_m=pre_insert_z_m,
-    )
-    # 推回在插入位基础上沿 x 推入、可同时微调高低（push_z_offset_cm，两个
-    # plan 都带）；末尾还书（ReturnBookMotionPlan）额外带 push_rpy_deg 可同
-    # 时微调姿态（相对插入姿态的偏移），中位还书没有该字段，按 0 处理（与
-    # pre_insert_x_m 同模式）。
-    push = insert.offset_cm(
-        (plan.push_x_offset_cm, 0.0, float(getattr(plan, "push_z_offset_cm", 0.0))),
-        rpy_offset_deg=getattr(plan, "push_rpy_deg", (0.0, 0.0, 0.0)),
-    )
-    # 位置仍基于推回位沿 x 回抽；末尾还书带 retract_rpy_deg 时朝向替换为
-    # 该固定值（不随插入/推回姿态），中位还书没有该字段，继续继承推回位
-    # 姿态（getattr 缺省 None，与 push_z_offset_cm 同模式）。
+        x_m=insert_target.x_m + plan.push_xy_offset_m[0],
+        y_m=insert_target.y_m + plan.push_xy_offset_m[1],
+        z_m=plan.push_z_m,
+    ).offset_cm((0.0, 0.0, 0.0), rpy_offset_deg=plan.push_rpy_deg)
+    # 位置仍基于推回位沿 x 回抽；带 retract_rpy_deg 的计划使用该固定安全
+    # 姿态，不随插入/推回姿态变化。
     retract = push.offset_cm(
         (plan.retract_x_offset_cm, 0.0, 0.0),
         rpy_deg=getattr(plan, "retract_rpy_deg", None),
@@ -453,12 +464,10 @@ class MidReturnBookUseCase:
     the left-neighbor spine (first-round target), run the take-book grasp
     chain on it, put the pulled book back loosely (push in, release, clear
     out), re-locate the same target book, compute the insert target, pick the
-    return book from the stand, then move directly from the stand grasp to
-    pre-insert without returning to debug
-    (Y1 = target y + plan.target_y_offset_cm; no depth gap scan is run),
-    insert at y=Y1 with x/z from the fresh target, push in,
-    release and retract, rotate the empty gripper, press the book spines
-    flush and retract once more before returning to the debug pose.
+    return book from the stand, retreat to debug, then use the end-return
+    sequence through the first retract, rotate, press the book spines, retract
+    again, and return to debug. The pre-insert, insert, and push steps use
+    recognized target XY plus per-step XY offsets and absolute base-frame Z.
     """
 
     def __init__(
@@ -534,7 +543,7 @@ class MidReturnBookUseCase:
                         lambda: self._check_insert_reachability(context),
                         False,
                     ),
-                    ("shelf_insert", lambda: self._insert_at_centerline(task, context, self._require_pickup(pickup)), True),
+                    ("shelf_insert", lambda: self._insert_at_centerline(task, context), True),
                 )
             else:
                 steps = (
@@ -581,7 +590,7 @@ class MidReturnBookUseCase:
                         lambda: self._pickup_from_stand(task, request, self._require_pickup(pickup)),
                         True,
                     ),
-                    ("shelf_insert", lambda: self._insert_at_centerline(task, context, self._require_pickup(pickup)), True),
+                    ("shelf_insert", lambda: self._insert_at_centerline(task, context), True),
                 )
             return self.engine.run(
                 task, self._steps_to_stop_stage(steps, request.stop_after_stage)
@@ -730,17 +739,27 @@ class MidReturnBookUseCase:
         request: MidReturnBookRequest,
         pickup: BookStandPickupPlan,
     ) -> Dict[str, Any]:
-        """Steps 17-20: open, drive onto the slot, close with adaptive hold, retreat."""
+        """Open, drive onto the slot, close and retreat to debug like end-return."""
 
-        return pickup_book_from_stand(
+        result = pickup_book_from_stand(
             self.arm,
             self.engine,
             task,
             self.plan,
             int(request.source_slot.value),
             pickup,
-            adaptive_hold=True,
+            adaptive_hold=False,
         )
+        self.rod.move_to_deg(
+            self.plan.pickup_rod_home_deg,
+            self.plan.rod_speed,
+            self.plan.rod_acceleration,
+            self.plan.rod_tolerance_deg,
+            self.plan.rod_timeout_s,
+        )
+        self.engine.raise_if_cancelled(task)
+        result["rod_deg"] = self.plan.pickup_rod_home_deg
+        return result
 
     def _post_vision_align(
         self,
@@ -773,8 +792,8 @@ class MidReturnBookUseCase:
         return retarget_insert_book(self.vision, request.left_neighbor_spine_template, context)
 
     def _compute_insert_target(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Compute Y1 directly from the freshly re-targeted book: no
-        depth gap scan is run; Y1 = target grasp y + plan.target_y_offset_cm."""
+        """Compute target XY plus configured offsets and absolute Z from the
+        freshly re-targeted book, then build all insert-chain poses."""
 
         details = compute_insert_target(self.plan, context)
         poses = insert_chain_poses(self.plan, context["insert_target"], self.arm)
@@ -800,19 +819,10 @@ class MidReturnBookUseCase:
         self,
         task: WorkflowTask,
         context: Dict[str, Any],
-        pickup: BookStandPickupPlan,
     ) -> Dict[str, Any]:
-        """Extend the rod, clear through stand pre_grasp, then run the insert chain."""
+        """Run the same insert, release, retract and debug chain as end-return."""
 
-        return run_insert_chain(
-            self.arm,
-            self.engine,
-            task,
-            self.plan,
-            context,
-            rod=self.rod,
-            stand_pickup=pickup,
-        )
+        return run_insert_chain(self.arm, self.engine, task, self.plan, context)
 
 
 def _injected_book_target(values: Sequence[float]) -> BookTarget:

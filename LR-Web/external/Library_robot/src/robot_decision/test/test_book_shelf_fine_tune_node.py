@@ -11,6 +11,43 @@ from robot_decision.book_shelf_fine_tune_node import (
 )
 
 
+def _set_heading_defaults(node) -> None:
+    node.shelf_heading_kp = 3.0
+    node.shelf_heading_kd = 0.4
+    node.shelf_heading_deadband_rad = math.radians(3.0)
+    node.shelf_heading_max_error_rad = math.radians(10.0)
+    node.shelf_heading_max_error_rate_rad_s = 1.0
+    node.shelf_heading_min_turning_radius_m = 1.0
+
+
+def _x_control_node(x_error: float, yaw_error: float, speed: float = 0.05):
+    node = BookShelfFineTuneNode.__new__(BookShelfFineTuneNode)
+    node._abort_requested = SimpleNamespace(is_set=lambda: False)
+    node._target_errors = lambda *_args: (x_error, 0.0, yaw_error)
+    node.x_tolerance = 0.05
+    node.k_x = 1.0
+    node.max_linear_speed = 0.05
+    node.max_angular_speed = 0.12
+    node._shelf_move_speed_override = speed
+    node._shelf_heading_guidance_enabled = True
+    _set_heading_defaults(node)
+    return node
+
+
+def _run_x_once(node, monkeypatch):
+    messages = []
+    node._velocity_publisher = SimpleNamespace(publish=lambda message: messages.append(message))
+    monkeypatch.setattr(
+        "robot_decision.book_shelf_fine_tune_node.time.monotonic",
+        lambda: 0.0 if not messages else 1.0,
+    )
+    monkeypatch.setattr("robot_decision.book_shelf_fine_tune_node.time.sleep", lambda _period: None)
+    success, _message = node._tune_x(0.0, 0.0, 0.0, deadline=1.0, period=0.1)
+    assert success is False
+    assert len(messages) == 1
+    return messages[0]
+
+
 def test_clamp_limits_magnitude_and_preserves_sign() -> None:
     assert _clamp(0.1, 0.2) == pytest.approx(0.1)
     assert _clamp(-0.1, 0.2) == pytest.approx(-0.1)
@@ -73,6 +110,7 @@ def test_x_only_shelf_move_never_runs_lateral_or_yaw_stages() -> None:
         "control_mode": "differential",
         "x_only": True,
         "shelf_move_speed_mps": 0.08,
+        "shelf_move_x_tolerance_m": float("nan"),
     }
     node.get_parameter = lambda name: SimpleNamespace(value=parameters[name])
     node.get_logger = lambda: SimpleNamespace(info=lambda _message: None)
@@ -92,6 +130,30 @@ def test_x_only_shelf_move_never_runs_lateral_or_yaw_stages() -> None:
     assert success is True
     assert message.startswith("shelf move complete")
     assert calls == ["x"]
+
+
+def test_x_only_shelf_move_uses_command_x_tolerance_for_final_check() -> None:
+    node = BookShelfFineTuneNode.__new__(BookShelfFineTuneNode)
+    parameters = {
+        "control_mode": "differential",
+        "x_only": True,
+        "shelf_move_speed_mps": float("nan"),
+        "shelf_move_x_tolerance_m": 0.02,
+    }
+    node.get_parameter = lambda name: SimpleNamespace(value=parameters[name])
+    node.get_logger = lambda: SimpleNamespace(info=lambda _message: None)
+    node.timeout_sec = 10.0
+    node.stage_timeout_sec = 10.0
+    node.control_rate_hz = 8.0
+    node.x_tolerance = 0.05
+    node._tune_x = lambda *_args: (True, "x aligned")
+    node._target_errors = lambda *_args: (0.03, 0.0, 0.0)
+    node._publish_stop = lambda: None
+
+    success, message = node._run_fine_tune(0.0, 0.0, 0.0, "CMD-SHELF")
+
+    assert success is False
+    assert "final tolerance check failed" in message
 
 
 def test_normal_fine_tune_still_runs_all_stages() -> None:
@@ -132,6 +194,8 @@ def test_shelf_move_uses_manual_speed_without_changing_fine_tune_limit(
     node.k_x = 1.0
     node.max_linear_speed = 0.05
     node._shelf_move_speed_override = speed
+    node._shelf_heading_guidance_enabled = True
+    _set_heading_defaults(node)
     messages = []
     node._velocity_publisher = SimpleNamespace(publish=lambda message: messages.append(message))
     monkeypatch.setattr(
@@ -148,3 +212,75 @@ def test_shelf_move_uses_manual_speed_without_changing_fine_tune_limit(
     assert messages[0].linear.y == 0.0
     assert messages[0].angular.z == 0.0
     assert node.max_linear_speed == 0.05
+
+
+def test_shelf_heading_guidance_stops_inside_three_degree_deadband(monkeypatch) -> None:
+    command = _run_x_once(
+        _x_control_node(1.0, math.radians(2.0), speed=0.5), monkeypatch
+    )
+
+    assert command.angular.z == 0.0
+
+
+def test_shelf_heading_guidance_uses_proportional_control(monkeypatch) -> None:
+    node = _x_control_node(1.0, math.radians(6.0), speed=0.5)
+    node.shelf_heading_kp = 0.5
+
+    command = _run_x_once(node, monkeypatch)
+
+    assert command.angular.z == pytest.approx(0.5 * math.radians(6.0))
+
+
+def test_shelf_heading_guidance_enforces_one_metre_radius_forward_and_reverse(
+    monkeypatch,
+) -> None:
+    for speed in (0.05, -0.05):
+        command = _run_x_once(
+            _x_control_node(
+                math.copysign(1.0, speed), math.radians(8.0), speed=abs(speed)
+            ),
+            monkeypatch,
+        )
+
+        assert command.linear.x == pytest.approx(speed)
+        assert command.angular.z == pytest.approx(0.05)
+        assert abs(command.linear.x / command.angular.z) >= 1.0
+
+
+def test_shelf_heading_guidance_does_not_turn_without_linear_motion(monkeypatch) -> None:
+    command = _run_x_once(
+        _x_control_node(1.0, math.radians(10.0), speed=0.0), monkeypatch
+    )
+
+    assert command.linear.x == 0.0
+    assert command.angular.z == 0.0
+
+
+def test_shelf_heading_guidance_clamps_error_to_ten_degrees(monkeypatch) -> None:
+    node = _x_control_node(1.0, math.radians(90.0), speed=0.5)
+    node.shelf_heading_kp = 0.1
+
+    command = _run_x_once(node, monkeypatch)
+
+    assert command.angular.z == pytest.approx(0.1 * math.radians(10.0))
+
+
+def test_shelf_move_arrival_does_not_require_heading_alignment() -> None:
+    node = _x_control_node(0.01, math.radians(30.0))
+    node._velocity_publisher = SimpleNamespace(
+        publish=lambda _message: pytest.fail("arrival must not publish another command")
+    )
+
+    success, message = node._tune_x(0.0, 0.0, 0.0, deadline=float("inf"), period=0.1)
+
+    assert success is True
+    assert message == "x aligned"
+
+
+def test_normal_fine_tune_x_stage_does_not_use_shelf_heading_guidance(monkeypatch) -> None:
+    node = _x_control_node(1.0, math.radians(5.0), speed=0.5)
+    del node._shelf_heading_guidance_enabled
+
+    command = _run_x_once(node, monkeypatch)
+
+    assert command.angular.z == 0.0

@@ -81,9 +81,19 @@ class TuningServiceTests(unittest.TestCase):
         self.assertEqual(profile["gripper"]["close_deg"], 108.5)
 
         return_profile = self.client.get("%s/return/profile" % TUNING_URL).json()
-        self.assertEqual(return_profile["target_y_offset_cm"], 4.0)
+        self.assertEqual(return_profile["pre_insert_xy_offset_m"], [0.30, 0.04])
+        self.assertEqual(return_profile["pre_insert_z_m"], 0.04)
+        self.assertEqual(return_profile["insert_xy_offset_m"], [0.0, 0.04])
+        self.assertEqual(return_profile["insert_z_m"], 0.04)
+        self.assertEqual(return_profile["push_xy_offset_m"], [-0.05, 0.04])
+        self.assertEqual(return_profile["push_z_m"], 0.04)
+        self.assertEqual(return_profile["pre_insert_rpy_deg"], [95.0, 0.0, 90.0])
         self.assertEqual(return_profile["insert_rpy_deg"], [95.0, 0.0, 90.0])
-        self.assertEqual(return_profile["min_insert_z_m"], 0.25)
+        self.assertEqual(return_profile["rod_home_deg"], 0.0)
+        self.assertEqual(return_profile["rod_speed"], 1000)
+        self.assertEqual(return_profile["rod_acceleration"], 50)
+        self.assertEqual(return_profile["rod_tolerance_deg"], 1.5)
+        self.assertEqual(return_profile["rod_timeout_s"], 12.0)
         self.assertIn("gripper", return_profile)
         # The retired shelf-placement and rod fields are gone.
         for removed in (
@@ -97,8 +107,18 @@ class TuningServiceTests(unittest.TestCase):
             "retreat_duration_s",
             "rod_prepare_deg",
             "prepare_gripper_open_deg",
-            "rod_speed",
             "pre_insert_x_m",
+            "pre_insert_x_max_m",
+            "target_y_offset_cm",
+            "insert_offset_cm",
+            "min_insert_z_m",
+            "pre_insert_y_offset_cm",
+            "pre_insert_z_offset_cm",
+            "push_x_offset_cm",
+            "push_z_offset_cm",
+            "pre_insert_position_m",
+            "insert_position_m",
+            "push_position_m",
         ):
             self.assertNotIn(removed, return_profile)
 
@@ -463,13 +483,13 @@ class TuningServiceTests(unittest.TestCase):
         self.assertIsNone(insert["motion"])
         self.assertIn("识别目标书", insert["reason"])
         # The book-slot step previews the selected pickup slot right away.
-        slot_step = view["steps"][21]
+        slot_step = view["steps"][20]
         self.assertEqual(slot_step["step_name"], "运动到书槽(pre_grasp→grasp)")
         self.assertAlmostEqual(slot_step["motion"]["x_mm"], -300.0)
 
         # After the retarget the insert pose previews off the fresh target.
         ran = self.client.post(
-            "%s/midreturn/session/step/run" % TUNING_URL, json={"index": 20}
+            "%s/midreturn/session/step/run" % TUNING_URL, json={"index": 19}
         )
         self.assertEqual(ran.status_code, 200)
         view = self.client.get(
@@ -481,20 +501,20 @@ class TuningServiceTests(unittest.TestCase):
 
     def test_return_step_preview_matches_run_step_for_pickup_slots(self):
         self.prepare("return", slot=2)
-        # Walk past 调试位 / 张开夹爪 / 识别目标书, then compare
+        # Walk past 调试位 / 张开夹爪 / 推杆归零 / 识别目标书, then compare
         # 运动到书槽's preview with the run detail (the compound step drives
         # pre_grasp→grasp).
-        for index in (0, 1, 2):
+        for index in (0, 1, 2, 3):
             self.client.post(
                 "%s/return/session/step/run" % TUNING_URL, json={"index": index}
             )
         preview = self.client.get(
             "%s/return/session/step/preview" % TUNING_URL
         ).json()
-        self.assertEqual(preview["step_index"], 3)
+        self.assertEqual(preview["step_index"], 4)
         self.assertEqual(preview["step_name"], "运动到书槽")
         ran = self.client.post(
-            "%s/return/session/step/run" % TUNING_URL, json={"index": 3}
+            "%s/return/session/step/run" % TUNING_URL, json={"index": 4}
         )
         self.assertEqual(ran.status_code, 200)
         expected = ran.json()["detail"]["pre_grasp_pose"]
@@ -923,21 +943,24 @@ class TuningServiceTests(unittest.TestCase):
         self.assertTrue(session["has_target"])
 
     def test_return_session_walks_every_step(self):
-        # 识别目标书 (index 2) needs the prepared template first.
+        # 识别目标书 (index 3) needs the prepared template first.
         unprepared = self.client.post(
-            "%s/return/session/step/run" % TUNING_URL, json={"index": 2}
+            "%s/return/session/step/run" % TUNING_URL, json={"index": 3}
         )
         self.assertEqual(unprepared.status_code, 409)
 
         session = self.client.get("%s/return/session" % TUNING_URL).json()
-        self.assertEqual(len(session["steps"]), 12)
+        self.assertEqual(len(session["steps"]), 15)
         self.assertEqual(
             session["steps"],
             [
                 "调试位",
                 "张开夹爪",
+                "推杆归零",
                 "识别目标书",
                 "运动到书槽",
+                "轻闭夹爪",
+                "调整夹书深度",
                 "闭合夹爪",
                 "回调试位",
                 "预插入位",
@@ -959,7 +982,7 @@ class TuningServiceTests(unittest.TestCase):
         prepared = self.prepare("return", slot=2)
         self.assertTrue(prepared["ok"])
         details = []
-        for expected_index in range(1, 13):
+        for expected_index in range(1, 16):
             step = self.client.post("%s/return/session/step/next" % TUNING_URL)
             self.assertEqual(step.status_code, 200)
             self.assertEqual(step.json()["step_index"], expected_index)
@@ -967,113 +990,162 @@ class TuningServiceTests(unittest.TestCase):
         finished = self.client.post("%s/return/session/step/next" % TUNING_URL)
         self.assertTrue(finished.json()["detail"]["finished"])
 
-        # Synchronous re-locate at the debug pose, then the slot pickup:
-        # open 50°, pre_grasp→grasp, close, retreat to debug.
         self.assertEqual(details[1]["open_deg"], 50.0)
-        self.assertEqual(len(details[2]["target_base_pose"]), 6)
-        self.assertAlmostEqual(details[2]["target_base_pose"][1], -0.07)
-        self.assertAlmostEqual(details[3]["pre_grasp_pose"][0], -0.30)
-        self.assertAlmostEqual(details[3]["grasp_pose"][0], -0.34)
-        self.assertIn("gripper_close", details[4])
-        self.assertEqual(len(details[5]["debug_joint_rad"]), 6)
-        # The insert chain anchors on the cached recognition: y = -0.07 +
-        # 4 cm = -0.03, z (0.23) is clamped up to the 0.25 m reachability
-        # floor, and the pre-insert x is IK-searched (the fake arm reaches
-        # everything, so the plan's -0.20 m cap itself wins).
-        self.assertAlmostEqual(details[6]["base_pose"][0], -0.20)
-        self.assertAlmostEqual(details[6]["base_pose"][1], -0.03)
-        self.assertAlmostEqual(details[6]["base_pose"][2], 0.25)
-        self.assertAlmostEqual(details[7]["base_pose"][0], -0.35)
-        self.assertAlmostEqual(details[7]["base_pose"][1], -0.03)
-        self.assertAlmostEqual(details[7]["base_pose"][2], 0.25)
-        self.assertAlmostEqual(details[8]["base_pose"][0], -0.40)
-        self.assertEqual(details[9]["open_deg"], 50.0)
-        self.assertAlmostEqual(details[10]["base_pose"][0], -0.30)
-        self.assertEqual(len(details[11]["debug_joint_rad"]), 6)
+        self.assertEqual(details[2]["rod_deg"], 0.0)
+        self.assertEqual(len(details[3]["target_base_pose"]), 6)
+        self.assertAlmostEqual(details[3]["target_base_pose"][1], -0.07)
+        self.assertAlmostEqual(details[4]["pre_grasp_pose"][0], -0.30)
+        self.assertAlmostEqual(details[4]["grasp_pose"][0], -0.34)
+        self.assertIn("gripper_close", details[5])
+        self.assertEqual(details[5]["light_close_deg"], 70.0)
+        self.assertEqual(details[6]["current_base_pose"], details[4]["grasp_pose"])
+        self.assertAlmostEqual(details[6]["base_pose"][0], -0.34)
+        self.assertAlmostEqual(
+            details[6]["base_pose"][2], details[4]["grasp_pose"][2] - 0.01
+        )
+        self.assertIn("gripper_close", details[7])
+        self.assertEqual(len(details[8]["debug_joint_rad"]), 6)
+        self.assertAlmostEqual(details[9]["base_pose"][0], -0.05)
+        self.assertAlmostEqual(details[9]["base_pose"][1], -0.03)
+        self.assertAlmostEqual(details[9]["base_pose"][2], 0.04)
+        self.assertAlmostEqual(details[10]["base_pose"][0], -0.35)
+        self.assertAlmostEqual(details[10]["base_pose"][1], -0.03)
+        self.assertAlmostEqual(details[10]["base_pose"][2], 0.04)
+        self.assertAlmostEqual(details[11]["base_pose"][0], -0.40)
+        self.assertEqual(details[12]["open_deg"], 50.0)
+        self.assertAlmostEqual(details[13]["base_pose"][0], -0.30)
+        self.assertEqual(len(details[14]["debug_joint_rad"]), 6)
 
         # The retarget step re-runs vision against the cached template.
         relocate = self.client.post(
-            "%s/return/session/step/run" % TUNING_URL, json={"index": 2}
+            "%s/return/session/step/run" % TUNING_URL, json={"index": 3}
         )
         self.assertEqual(relocate.status_code, 200)
         self.assertEqual(relocate.json()["step_name"], "识别目标书")
         self.assertEqual(len(relocate.json()["detail"]["target_base_pose"]), 6)
 
-        # reset rewinds the cursor but keeps the cached recognition, so the
-        # insert chain still resolves (same semantics as midreturn).
         reset = self.client.post("%s/return/session/reset" % TUNING_URL)
         self.assertEqual(reset.status_code, 200)
         insert = self.client.post(
-            "%s/return/session/step/run" % TUNING_URL, json={"index": 7}
+            "%s/return/session/step/run" % TUNING_URL, json={"index": 10}
         )
         self.assertEqual(insert.status_code, 200)
         self.assertAlmostEqual(insert.json()["detail"]["base_pose"][0], -0.35)
 
     def test_return_insert_steps_need_the_retarget_step(self):
-        # Without 识别目标书 the insert chain explains what to run first.
         self.prepare("return", slot=1)
         preview = self.client.get(
-            "%s/return/session/step/preview?step_index=6" % TUNING_URL
+            "%s/return/session/step/preview?step_index=9" % TUNING_URL
         ).json()
         self.assertIsNone(preview["motion"])
         self.assertIn("识别目标书", preview["reason"])
         blocked = self.client.post(
-            "%s/return/session/step/run" % TUNING_URL, json={"index": 6}
+            "%s/return/session/step/run" % TUNING_URL, json={"index": 9}
         )
         self.assertEqual(blocked.status_code, 409)
         self.assertIn("识别目标书", blocked.json()["detail"])
 
-        # Step 2 is synchronous: it returns the located target directly.
         retarget = self.client.post(
-            "%s/return/session/step/run" % TUNING_URL, json={"index": 2}
+            "%s/return/session/step/run" % TUNING_URL, json={"index": 3}
         )
         self.assertEqual(retarget.status_code, 200)
-        self.assertEqual(retarget.json()["step_name"], "识别目标书")
-        self.assertEqual(len(retarget.json()["detail"]["target_base_pose"]), 6)
-
-        # Insert steps compute from the cache; the dynamic-x search routes
-        # off the arm worker (one probe per pose computation).
         arm = self.tuning.return_book.session._devices.arm
         self.assertEqual(arm.ik_probes, [])
-        preview = self.client.get(
-            "%s/return/session/step/preview?step_index=7" % TUNING_URL
-        ).json()
-        self.assertIsNotNone(preview["motion"])
-        self.assertAlmostEqual(preview["motion"]["y_mm"], -30.0)
-        self.assertAlmostEqual(preview["motion"]["z_mm"], 250.0)
         ran = self.client.post(
-            "%s/return/session/step/run" % TUNING_URL, json={"index": 6}
+            "%s/return/session/step/run" % TUNING_URL, json={"index": 9}
         )
         self.assertEqual(ran.status_code, 200)
         self.assertEqual(ran.json()["step_name"], "预插入位")
-        self.assertAlmostEqual(ran.json()["detail"]["base_pose"][0], -0.20)
-        self.assertEqual(arm.ik_probes, ["pre_insert_x_search", "pre_insert_x_search"])
+        for actual, expected in zip(
+            ran.json()["detail"]["base_pose"][:3], [-0.05, -0.03, 0.04]
+        ):
+            self.assertAlmostEqual(actual, expected)
 
-    def test_return_insert_steps_follow_a_profile_hot_swap_after_the_retarget(self):
+        preview = self.client.get(
+            "%s/return/session/step/preview?step_index=10" % TUNING_URL
+        ).json()
+        self.assertIsNotNone(preview["motion"])
+        self.assertAlmostEqual(preview["motion"]["y_mm"], -30.0)
+        self.assertAlmostEqual(preview["motion"]["z_mm"], 40.0)
+        self.assertEqual(arm.ik_probes, [])
+
+    def test_return_insert_steps_follow_a_profile_hot_swap(self):
         self.prepare("return", slot=1)
         retarget = self.client.post(
-            "%s/return/session/step/run" % TUNING_URL, json={"index": 2}
+            "%s/return/session/step/run" % TUNING_URL, json={"index": 3}
         )
         self.assertEqual(retarget.status_code, 200)
-        # The chain computes lazily from the cached recognition: y = -0.03 m.
         before = self.client.get(
-            "%s/return/session/step/preview?step_index=7" % TUNING_URL
+            "%s/return/session/step/preview?step_index=10" % TUNING_URL
         ).json()
         self.assertAlmostEqual(before["motion"]["y_mm"], -30.0)
 
         applied = self.client.put(
             "%s/return/profile?persist=false" % TUNING_URL,
-            json={"target_y_offset_cm": 8.0},
+            json={"insert_xy_offset_m": [0.0, 0.08], "insert_z_m": 0.25},
         )
         self.assertEqual(applied.status_code, 200)
 
-        # No invalidation needed: the next preview recomputes from the cached
-        # target with the live plan (y = -0.07 + 8 cm = 0.01 m).
         after = self.client.get(
-            "%s/return/session/step/preview?step_index=7" % TUNING_URL
+            "%s/return/session/step/preview?step_index=10" % TUNING_URL
         ).json()
         self.assertIsNotNone(after["motion"])
         self.assertAlmostEqual(after["motion"]["y_mm"], 10.0)
+        self.assertAlmostEqual(after["motion"]["z_mm"], 250.0)
+
+    def test_return_insert_steps_use_target_offsets_and_convert_preview_units(self):
+        self.prepare("return", slot=1)
+        retarget = self.client.post(
+            "%s/return/session/step/run" % TUNING_URL, json={"index": 3}
+        )
+        self.assertEqual(retarget.status_code, 200)
+        applied = self.client.put(
+            "%s/return/profile?persist=false" % TUNING_URL,
+            json={
+                "pre_insert_xy_offset_m": [0.30, 0.055],
+                "pre_insert_z_m": 0.225,
+                "insert_xy_offset_m": [0.02, 0.07],
+                "insert_z_m": 0.29,
+                "push_xy_offset_m": [-0.06, 0.04],
+                "push_z_m": 0.28,
+                "pre_insert_rpy_deg": [80.0, 5.0, 70.0],
+                "push_rpy_deg": [5.0, -10.0, 2.0],
+            },
+        )
+        self.assertEqual(applied.status_code, 200)
+
+        view = self.client.get(
+            "%s/return/session/step/preview?all=1" % TUNING_URL
+        ).json()
+        expected_poses = {
+            9: (-0.05, -0.015, 0.225, 80.0, 5.0, 70.0),
+            10: (-0.33, 0.0, 0.29, 95.0, 0.0, 90.0),
+            11: (-0.41, -0.03, 0.28, 100.0, -10.0, 92.0),
+        }
+        motion_keys = ("x_mm", "y_mm", "z_mm", "rx_deg", "ry_deg", "rz_deg")
+        for index, expected in expected_poses.items():
+            motion = view["steps"][index]["motion"]
+            self.assertIsNotNone(motion)
+            expected_motion = (
+                expected[0] * 1000.0,
+                expected[1] * 1000.0,
+                expected[2] * 1000.0,
+                *expected[3:],
+            )
+            for key, expected_value in zip(motion_keys, expected_motion):
+                self.assertAlmostEqual(motion[key], expected_value, places=6)
+
+            ran = self.client.post(
+                "%s/return/session/step/run" % TUNING_URL, json={"index": index}
+            )
+            self.assertEqual(ran.status_code, 200)
+            actual = ran.json()["detail"]["base_pose"]
+            for actual_value, expected_value in zip(actual[:3], expected[:3]):
+                self.assertAlmostEqual(actual_value, expected_value, places=6)
+            for actual_value, expected_value in zip(actual[3:], expected[3:]):
+                self.assertAlmostEqual(
+                    actual_value, math.radians(expected_value), places=6
+                )
 
     def test_return_retarget_step_reports_a_failed_recognition(self):
         self.prepare("return", slot=1)
@@ -1084,7 +1156,7 @@ class TuningServiceTests(unittest.TestCase):
 
         vision.locate_book = failed_locate
         ran = self.client.post(
-            "%s/return/session/step/run" % TUNING_URL, json={"index": 2}
+            "%s/return/session/step/run" % TUNING_URL, json={"index": 3}
         )
         # Same mapping as a mid-return retarget vision failure.
         self.assertEqual(ran.status_code, 503)
@@ -1099,7 +1171,7 @@ class TuningServiceTests(unittest.TestCase):
 
         vision.locate_book = failed_locate
         ran = self.client.post(
-            "%s/return/session/step/run" % TUNING_URL, json={"index": 2}
+            "%s/return/session/step/run" % TUNING_URL, json={"index": 3}
         )
 
         self.assertEqual(ran.status_code, 422)
@@ -1225,17 +1297,23 @@ class TuningServiceTests(unittest.TestCase):
     def test_persisted_return_profile_loads_with_the_stock_loader(self):
         response = self.client.put(
             "%s/return/profile" % TUNING_URL,
-            json={"release_open_deg": 75.0, "target_y_offset_cm": 6.0},
+            json={
+                "release_open_deg": 75.0,
+                "insert_xy_offset_m": [-0.01, 0.13],
+                "insert_z_m": 0.28,
+            },
         )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.runner.return_plan.release_open_deg, 75.0)
-        self.assertEqual(self.runner.return_plan.target_y_offset_cm, 6.0)
+        self.assertEqual(self.runner.return_plan.insert_xy_offset_m, (-0.01, 0.13))
+        self.assertEqual(self.runner.return_plan.insert_z_m, 0.28)
         persisted = self.tuning_dir / "return_profile.json"
         self.assertTrue(persisted.is_file())
         reloaded = load_return_book_motion_plan(persisted)
         self.assertEqual(reloaded.release_open_deg, 75.0)
-        self.assertEqual(reloaded.target_y_offset_cm, 6.0)
+        self.assertEqual(reloaded.insert_xy_offset_m, (-0.01, 0.13))
+        self.assertEqual(reloaded.insert_z_m, 0.28)
         self.assertEqual(reloaded.insert_rpy_deg, (95.0, 0.0, 90.0))
 
     def test_return_profile_accepts_push_rpy_deg(self):
@@ -1278,7 +1356,7 @@ class TuningServiceTests(unittest.TestCase):
         self.assertEqual(live.gripper.contact_hold_duration_s, 1.0)
         # Grasp-safety constants stay at the calibrated values.
         self.assertEqual(live.gripper.min_monitor_s, 0.4)
-        self.assertEqual(live.gripper.effort, 0.5)
+        self.assertEqual(live.gripper.effort, 0.85)
         # The persisted file holds the base document; the stock loader
         # reproduces the same effective plan at startup.
         persisted = self.tuning_dir / "take_profile.json"

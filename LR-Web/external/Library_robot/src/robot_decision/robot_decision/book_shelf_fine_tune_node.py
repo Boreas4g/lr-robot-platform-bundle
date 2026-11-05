@@ -6,9 +6,10 @@ The service is loopback ROS only.  It accepts no MQTT data itself; Edge Gateway
 first validates a shelf goal, then sets the target parameters and invokes the
 service.  The control law mirrors the patrol fine tune (point3_fine_tune_node):
 base-frame errors and plain clamped P commands published straight to /cmd_vel.
-Normal fine tuning runs x/y/yaw stages; shelf_move runs only the x stage with
-the same tolerance and an optional per-command speed. Differential yaw stages
-rotate in place; Ackermann yaw stages use a low-speed 1 m arc selected by the gateway.
+Normal fine tuning runs x/y/yaw stages; shelf_move controls x with an optional
+per-command speed/tolerance and uses bounded PD heading guidance while driving.
+Heading is not a shelf_move arrival criterion. Differential yaw stages rotate in
+place; Ackermann yaw stages use a low-speed 1 m arc selected by the gateway.
 """
 
 from __future__ import annotations
@@ -93,6 +94,13 @@ class BookShelfFineTuneNode(Node):
         self.declare_parameter("target_task_id", "")
         self.declare_parameter("x_only", False)
         self.declare_parameter("shelf_move_speed_mps", float("nan"))
+        self.declare_parameter("shelf_move_x_tolerance_m", float("nan"))
+        self.declare_parameter("shelf_heading_kp", 3.0)
+        self.declare_parameter("shelf_heading_kd", 0.4)
+        self.declare_parameter("shelf_heading_deadband_rad", math.radians(3.0))
+        self.declare_parameter("shelf_heading_max_error_rad", math.radians(10.0))
+        self.declare_parameter("shelf_heading_max_error_rate_rad_s", 1.0)
+        self.declare_parameter("shelf_heading_min_turning_radius_m", 1.0)
         self.declare_parameter("control_mode", DIFFERENTIAL)
         self.declare_parameter("control_rate_hz", 8.0)
         self.declare_parameter("x_tolerance", 0.03)
@@ -122,6 +130,20 @@ class BookShelfFineTuneNode(Node):
         self.k_x = float(self.get_parameter("k_x").value)
         self.k_y = float(self.get_parameter("k_y").value)
         self.k_yaw = float(self.get_parameter("k_yaw").value)
+        self.shelf_heading_kp = float(self.get_parameter("shelf_heading_kp").value)
+        self.shelf_heading_kd = float(self.get_parameter("shelf_heading_kd").value)
+        self.shelf_heading_deadband_rad = float(
+            self.get_parameter("shelf_heading_deadband_rad").value
+        )
+        self.shelf_heading_max_error_rad = float(
+            self.get_parameter("shelf_heading_max_error_rad").value
+        )
+        self.shelf_heading_max_error_rate_rad_s = float(
+            self.get_parameter("shelf_heading_max_error_rate_rad_s").value
+        )
+        self.shelf_heading_min_turning_radius_m = float(
+            self.get_parameter("shelf_heading_min_turning_radius_m").value
+        )
         self.stage_timeout_sec = float(self.get_parameter("stage_timeout_sec").value)
         self.timeout_sec = float(self.get_parameter("timeout_sec").value)
         if not all((self.target_frame, self.base_frame, self.cmd_vel_topic, self.start_service_name, self.abort_service_name)):
@@ -136,6 +158,12 @@ class BookShelfFineTuneNode(Node):
             self.k_x,
             self.k_y,
             self.k_yaw,
+            self.shelf_heading_kp,
+            self.shelf_heading_kd,
+            self.shelf_heading_deadband_rad,
+            self.shelf_heading_max_error_rad,
+            self.shelf_heading_max_error_rate_rad_s,
+            self.shelf_heading_min_turning_radius_m,
             self.stage_timeout_sec,
             self.timeout_sec,
         )
@@ -198,13 +226,25 @@ class BookShelfFineTuneNode(Node):
         if self._control_mode not in {DIFFERENTIAL, ACKERMANN}:
             return False, "book shelf fine tune control mode is invalid"
         x_only = bool(self.get_parameter("x_only").value)
+        self._shelf_heading_guidance_enabled = x_only
         self._shelf_move_speed_override = None
+        self._x_tolerance_for_run = self.x_tolerance
         if x_only:
             requested_speed = float(self.get_parameter("shelf_move_speed_mps").value)
             if not math.isnan(requested_speed):
                 if not math.isfinite(requested_speed) or not 0.0 <= requested_speed <= 0.50:
                     return False, "shelf move speed must be within 0.0..0.50 m/s"
                 self._shelf_move_speed_override = requested_speed
+            requested_x_tolerance = float(
+                self.get_parameter("shelf_move_x_tolerance_m").value
+            )
+            if not math.isnan(requested_x_tolerance):
+                if (
+                    not math.isfinite(requested_x_tolerance)
+                    or not 0.001 <= requested_x_tolerance <= 0.20
+                ):
+                    return False, "shelf move x tolerance must be within 0.001..0.20 m"
+                self._x_tolerance_for_run = requested_x_tolerance
         self.get_logger().info(
             "starting %s for %s in %s mode"
             % ("shelf move (x only)" if x_only else "book shelf fine tune", task_id, self._control_mode)
@@ -224,7 +264,11 @@ class BookShelfFineTuneNode(Node):
                 last_errors = self._target_errors(target_x, target_y, target_yaw)
             except TransformException as error:
                 return False, f"book shelf fine tune final TF lookup failed: {error}"
-            aligned = abs(last_errors[0]) <= self.x_tolerance if x_only else self._aligned(*last_errors)
+            aligned = (
+                abs(last_errors[0]) <= self._x_tolerance_for_run
+                if x_only
+                else self._aligned(*last_errors)
+            )
             if aligned:
                 label = "shelf move" if x_only else "book shelf fine tune"
                 return True, "%s complete: x=%.3f y=%.3f yaw=%.3f" % ((label,) + last_errors)
@@ -234,20 +278,48 @@ class BookShelfFineTuneNode(Node):
     def _tune_x(
         self, target_x: float, target_y: float, target_yaw: float, deadline: float, period: float
     ) -> tuple[bool, str]:
+        previous_yaw_error: float | None = None
         while time.monotonic() < deadline:
             if self._abort_requested.is_set():
                 return False, "book shelf fine tune cancelled"
             try:
-                x_error, _y_error, _yaw_error = self._target_errors(target_x, target_y, target_yaw)
+                x_error, _y_error, yaw_error = self._target_errors(target_x, target_y, target_yaw)
             except TransformException:
                 time.sleep(period)
                 continue
-            if abs(x_error) <= self.x_tolerance:
+            if abs(x_error) <= getattr(self, "_x_tolerance_for_run", self.x_tolerance):
                 return True, "x aligned"
             command = Twist()
             speed_override = getattr(self, "_shelf_move_speed_override", None)
             speed_limit = self.max_linear_speed if speed_override is None else speed_override
             command.linear.x = _clamp(self.k_x * x_error, speed_limit)
+
+            heading_error = _clamp(yaw_error, self.shelf_heading_max_error_rad)
+            if previous_yaw_error is None:
+                yaw_error_rate = 0.0
+            else:
+                yaw_error_rate = _clamp(
+                    (heading_error - previous_yaw_error) / period,
+                    self.shelf_heading_max_error_rate_rad_s,
+                )
+            previous_yaw_error = heading_error
+            if (
+                not getattr(self, "_shelf_heading_guidance_enabled", False)
+                or abs(heading_error) <= self.shelf_heading_deadband_rad
+                or command.linear.x == 0.0
+            ):
+                angular = 0.0
+            else:
+                angular = _clamp(
+                    self.shelf_heading_kp * heading_error
+                    - self.shelf_heading_kd * yaw_error_rate,
+                    self.max_angular_speed,
+                )
+                angular = _clamp(
+                    angular,
+                    abs(command.linear.x) / self.shelf_heading_min_turning_radius_m,
+                )
+            command.angular.z = angular
             self._velocity_publisher.publish(command)
             time.sleep(period)
         return False, "book shelf fine tune x stage timed out"
